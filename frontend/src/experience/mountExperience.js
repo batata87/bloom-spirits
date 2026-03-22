@@ -3,15 +3,20 @@ import { BlurFilter } from "pixi.js";
 import gsap from "gsap";
 import { mountGame, createBackgroundTexture } from "../Game.js";
 import {
-  savePlayer,
   loadPlayer,
-  clearSession,
   loadStats,
+  saveGuestPlayer,
+  clearGuestSession,
   incrementBlooms,
   incrementWorldsAwakened,
   addTimePlayed,
   formatPlayTime,
-} from "../session/playerStorage.js";
+  setGuestMode,
+  setAccountMode,
+  getStorageMode,
+} from "../session/playerStore.js";
+import { login, logout, subscribeAuth } from "../lib/auth.ts";
+import { isSupabaseConfigured } from "../lib/supabaseClient.ts";
 import { playSoftClick } from "../ui/softClick.js";
 
 const TEXT_STYLE_TITLE = {
@@ -99,17 +104,41 @@ export async function mountExperience(hostEl) {
       showScreen("profile");
     },
     onFlowLogout: () => {
-      playSoftClick();
-      doLogout();
+      void onLogoutClick();
     },
-    onBloom: () => incrementBlooms(1),
-    onWorldAwaken: () => incrementWorldsAwakened(),
-    onSessionTime: (ms) => addTimePlayed(ms),
+    onBloom: () => {
+      void incrementBlooms(1);
+    },
+    onWorldAwaken: () => {
+      void incrementWorldsAwakened();
+    },
+    onSessionTime: (ms) => {
+      void addTimePlayed(ms);
+    },
   });
 
   gameApi.setPaused(true);
   gameRoot.alpha = 0;
   gameRoot.visible = false;
+
+  function resetToWelcome() {
+    setGuestMode();
+    clearGuestSession();
+    gameApi.setPlayerLabel("Guest");
+    gameApi.setPaused(true);
+    gameRoot.alpha = 0;
+    gameRoot.visible = false;
+    showScreen("welcome");
+  }
+
+  async function onLogoutClick() {
+    playSoftClick();
+    if (getStorageMode() === "account") {
+      await logout();
+      return;
+    }
+    resetToWelcome();
+  }
 
   // —— Welcome ——
   const wBgTex = createBackgroundTexture(app.screen.width * 1.5, app.screen.height * 1.5);
@@ -120,14 +149,18 @@ export async function mountExperience(hostEl) {
   const title = new PIXI.Text({ text: "Bloom Spirits", style: TEXT_STYLE_TITLE });
   title.anchor.set(0.5);
 
-  const btnGuest = makeRoundedButton("Start as Guest", 220, 48);
-  const btnLogin = makeRoundedButton("Login", 220, 48);
+  const btnGuest = makeRoundedButton("Enter as guest", 220, 48);
+  const btnLogin = makeRoundedButton("Enter with email", 220, 48);
 
   welcomeRoot.addChild(wBg);
   welcomeRoot.addChild(wDim);
   welcomeRoot.addChild(title);
   welcomeRoot.addChild(btnGuest.container);
   welcomeRoot.addChild(btnLogin.container);
+
+  if (!isSupabaseConfigured) {
+    btnLogin.container.visible = false;
+  }
 
   // —— Profile ——
   const pBgTex = createBackgroundTexture(app.screen.width * 1.5, app.screen.height * 1.5);
@@ -143,7 +176,7 @@ export async function mountExperience(hostEl) {
   });
   pStats.anchor.set(0.5);
   const btnBack = makeRoundedButton("Back to Game", 200, 44);
-  const btnLogoutP = makeRoundedButton("Logout", 200, 44);
+  const btnLogoutP = makeRoundedButton("Leave the world", 200, 44);
 
   profileRoot.addChild(pBg);
   profileRoot.addChild(pDim);
@@ -165,8 +198,9 @@ export async function mountExperience(hostEl) {
     wDim.rect(0, 0, w, h).fill({ color: 0x0f2418, alpha: 0.42 });
     title.x = w * 0.5;
     title.y = h * 0.22;
+    const guestY = isSupabaseConfigured ? h * 0.48 : h * 0.5;
     btnGuest.container.x = w * 0.5 - 110;
-    btnGuest.container.y = h * 0.48;
+    btnGuest.container.y = guestY;
     btnLogin.container.x = w * 0.5 - 110;
     btnLogin.container.y = h * 0.48 + 58;
 
@@ -230,18 +264,10 @@ export async function mountExperience(hostEl) {
     showScreen("game");
   }
 
-  function doLogout() {
-    clearSession();
-    gameApi.setPlayerLabel("Guest");
-    gameApi.setPaused(true);
-    gameRoot.alpha = 0;
-    gameRoot.visible = false;
-    showScreen("welcome");
-  }
-
   btnGuest.container.on("pointerdown", () => {
     playSoftClick();
-    savePlayer({ name: "Guest", isGuest: true });
+    setGuestMode();
+    saveGuestPlayer({ name: "Guest", isGuest: true });
     gameApi.setPlayerLabel("Guest");
     enterGame();
   });
@@ -255,56 +281,114 @@ export async function mountExperience(hostEl) {
     showScreen("game");
   });
   btnLogoutP.container.on("pointerdown", () => {
-    playSoftClick();
-    doLogout();
+    void onLogoutClick();
   });
 
   const modal = document.createElement("div");
   modal.className = "bloom-login-modal";
   modal.innerHTML = `
     <div class="bloom-login-inner">
-      <label for="bloom-user">Name</label>
-      <input id="bloom-user" type="text" maxlength="24" placeholder="Your name" autocomplete="username" />
+      <label for="bloom-email">Where should we open the door?</label>
+      <input id="bloom-email" type="email" maxlength="320" placeholder="you@example.com" autocomplete="email" />
+      <p class="bloom-login-hint" hidden></p>
       <div class="bloom-login-actions">
-        <button type="button" class="bloom-btn bloom-enter">Enter</button>
-        <button type="button" class="bloom-btn bloom-cancel">Cancel</button>
+        <button type="button" class="bloom-btn bloom-enter">Send the way</button>
+        <button type="button" class="bloom-btn bloom-cancel">Not now</button>
       </div>
     </div>
   `;
   hostEl.appendChild(modal);
-  const inputEl = modal.querySelector("#bloom-user");
-  const submitLogin = () => {
+  const emailEl = modal.querySelector("#bloom-email");
+  const hintEl = modal.querySelector(".bloom-login-hint");
+
+  const submitEmail = async () => {
     playSoftClick();
-    const name = (inputEl.value || "").trim();
-    if (!name) {
-      inputEl.focus();
+    const email = (emailEl.value || "").trim();
+    if (!email) {
+      emailEl.focus();
       return;
     }
-    savePlayer({ name, isGuest: false });
-    gameApi.setPlayerLabel(name);
-    modal.classList.remove("visible");
-    enterGame();
+    hintEl.hidden = true;
+    const { error } = await login(email);
+    if (error) {
+      hintEl.textContent = "That didn't work. Try again in a moment.";
+      hintEl.hidden = false;
+      return;
+    }
+    hintEl.textContent = "There's a path in your inbox. Follow it when you're ready.";
+    hintEl.hidden = false;
   };
-  modal.querySelector(".bloom-enter").addEventListener("click", submitLogin);
-  inputEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") submitLogin();
+
+  modal.querySelector(".bloom-enter").addEventListener("click", () => {
+    void submitEmail();
+  });
+  emailEl.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") void submitEmail();
   });
   modal.querySelector(".bloom-cancel").addEventListener("click", () => {
     playSoftClick();
     modal.classList.remove("visible");
+    hintEl.hidden = true;
   });
 
   function openLoginModal() {
     modal.classList.add("visible");
-    inputEl.value = "";
-    setTimeout(() => inputEl.focus(), 80);
+    emailEl.value = "";
+    hintEl.hidden = true;
+    setTimeout(() => emailEl.focus(), 80);
   }
 
-  welcomeRoot.alpha = 1;
+  welcomeRoot.alpha = 0;
+
+  const unsubAuth = subscribeAuth(async (event, session) => {
+    if (event === "INITIAL_SESSION") {
+      if (session?.user) {
+        try {
+          await setAccountMode(session.user);
+          gameApi.setPlayerLabel(loadPlayer()?.name ?? "Spirit");
+          welcomeRoot.visible = false;
+          welcomeRoot.alpha = 0;
+          layoutFlowScreens();
+          enterGame();
+        } catch (e) {
+          console.error("[Bloom Spirits] Session load failed", e);
+          welcomeRoot.alpha = 1;
+          layoutFlowScreens();
+          showScreen("welcome");
+        }
+      } else {
+        welcomeRoot.alpha = 1;
+        layoutFlowScreens();
+        showScreen("welcome");
+      }
+      return;
+    }
+    if (event === "SIGNED_IN" && session?.user) {
+      try {
+        await setAccountMode(session.user);
+        gameApi.setPlayerLabel(loadPlayer()?.name ?? "Spirit");
+        modal.classList.remove("visible");
+        enterGame();
+      } catch (e) {
+        console.error("[Bloom Spirits] Sign-in failed", e);
+      }
+    }
+    if (event === "SIGNED_OUT") {
+      resetToWelcome();
+    }
+  });
+
+  if (!isSupabaseConfigured) {
+    welcomeRoot.alpha = 1;
+    layoutFlowScreens();
+    showScreen("welcome");
+  }
+
   layoutFlowScreens();
   app.renderer.on("resize", layoutFlowScreens);
 
   const cleanup = () => {
+    unsubAuth();
     app.renderer.off("resize", layoutFlowScreens);
     gameApi.cleanup();
     modal.remove();

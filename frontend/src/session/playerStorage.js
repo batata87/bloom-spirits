@@ -1,3 +1,4 @@
+/** Guest-only persistence (localStorage). Account progress uses Supabase via playerStore. */
 const PLAYER_KEY = "bloom_spirits_player";
 const STATS_KEY = "bloom_spirits_stats";
 
