@@ -1,10 +1,11 @@
-import { supabase, isSupabaseConfigured } from "./supabaseClient";
+import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
+import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
 export async function login(email: string) {
   if (!isSupabaseConfigured) {
     return { data: null, error: new Error("Supabase is not configured") };
   }
-  return supabase.auth.signInWithOtp({
+  return getSupabase().auth.signInWithOtp({
     email,
     options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
   });
@@ -12,15 +13,13 @@ export async function login(email: string) {
 
 export async function logout() {
   if (!isSupabaseConfigured) return;
-  await supabase.auth.signOut();
+  await getSupabase().auth.signOut();
 }
 
-export function subscribeAuth(
-  callback: Parameters<typeof supabase.auth.onAuthStateChange>[0]
-) {
+export function subscribeAuth(callback: (event: AuthChangeEvent, session: Session | null) => void) {
   if (!isSupabaseConfigured) {
     return () => {};
   }
-  const { data } = supabase.auth.onAuthStateChange(callback);
+  const { data } = getSupabase().auth.onAuthStateChange(callback);
   return () => data.subscription.unsubscribe();
 }

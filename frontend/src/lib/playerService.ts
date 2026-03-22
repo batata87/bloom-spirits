@@ -1,5 +1,5 @@
 import type { User } from "@supabase/supabase-js";
-import { supabase, isSupabaseConfigured } from "./supabaseClient";
+import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
 /**
  * Expected table `public.players` (enable RLS + policies in Supabase):
@@ -19,7 +19,7 @@ function assertConfigured() {
 
 export async function ensureAndLoadPlayer(user: User): Promise<PlayerRow> {
   assertConfigured();
-  const { data: existing, error: selErr } = await supabase
+  const { data: existing, error: selErr } = await getSupabase()
     .from("players")
     .select("*")
     .eq("id", user.id)
@@ -28,7 +28,7 @@ export async function ensureAndLoadPlayer(user: User): Promise<PlayerRow> {
   if (selErr) throw selErr;
   if (existing) return existing as PlayerRow;
 
-  const { data: inserted, error: insErr } = await supabase
+  const { data: inserted, error: insErr } = await getSupabase()
     .from("players")
     .insert({
       id: user.id,
@@ -46,7 +46,7 @@ export async function ensureAndLoadPlayer(user: User): Promise<PlayerRow> {
 
 export async function loadPlayer(userId: string) {
   assertConfigured();
-  return supabase.from("players").select("*").eq("id", userId).single();
+  return getSupabase().from("players").select("*").eq("id", userId).single();
 }
 
 export async function updatePlayer(userId: string, data: Partial<PlayerRow>) {
@@ -58,5 +58,5 @@ export async function updatePlayer(userId: string, data: Partial<PlayerRow>) {
   if (total_blooms !== undefined) patch.total_blooms = total_blooms;
   if (time_played_ms !== undefined) patch.time_played_ms = time_played_ms;
 
-  return supabase.from("players").update(patch).eq("id", userId);
+  return getSupabase().from("players").update(patch).eq("id", userId);
 }
