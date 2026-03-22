@@ -1,0 +1,30 @@
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #0a0d16;
+  font-family: Inter, Segoe UI, Arial, sans-serif;
+}
+
+#gameCanvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+}
+
+.hud {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 5;
+  color: #d8ebff;
+  background: rgba(10, 14, 24, 0.7);
+  border: 1px solid rgba(107, 188, 255, 0.35);
+  border-radius: 10px;
+  padding: 8px 12px;
+  backdrop-filter: blur(3px);
+  box-shadow: 0 0 14px rgba(72, 163, 255, 0.2);
+  font-size: 14px;
+}
