@@ -1,5 +1,6 @@
 import * as guest from "./playerStorage.js";
 import { ensureAndLoadPlayer, updatePlayer } from "../lib/playerService.ts";
+import { normalizeSpiritLook } from "../Game.js";
 
 /** @typedef {'guest' | 'account'} StorageMode */
 
@@ -46,16 +47,38 @@ function statsToRow(stats) {
   };
 }
 
-/** @returns {{ name: string, isGuest: boolean } | null} */
+/** @returns {{ name: string, isGuest: boolean, spiritLook: number } | null} */
 export function loadPlayer() {
-  if (mode === "guest") return guest.loadPlayer();
+  if (mode === "guest") {
+    const p = guest.loadPlayer();
+    if (!p) return null;
+    return { ...p, spiritLook: normalizeSpiritLook(p.spiritLook) };
+  }
   if (!accountRow) return null;
-  return { name: accountRow.name, isGuest: false };
+  return {
+    name: accountRow.name,
+    isGuest: false,
+    spiritLook: normalizeSpiritLook(accountRow.spirit_look),
+  };
 }
 
-/** @param {{ name: string, isGuest: boolean }} player */
+/** @param {{ name: string, isGuest: boolean, spiritLook?: number }} player */
 export function saveGuestPlayer(player) {
   guest.savePlayer(player);
+}
+
+/** @param {number} lookId */
+export async function saveSpiritLook(lookId) {
+  const id = normalizeSpiritLook(lookId);
+  if (mode === "guest") {
+    const p = guest.loadPlayer() ?? { name: "Guest", isGuest: true };
+    guest.savePlayer({ ...p, isGuest: true, spiritLook: id });
+    return;
+  }
+  if (!accountUserId || !accountRow) return;
+  accountRow = { ...accountRow, spirit_look: id };
+  const { error } = await updatePlayer(accountUserId, { spirit_look: id });
+  if (error) console.error("[Bloom Spirits] Failed to save spirit look", error);
 }
 
 /** @returns {{ worldsAwakened: number, totalBlooms: number, timePlayedMs: number }} */

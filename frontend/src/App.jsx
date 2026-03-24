@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { Analytics } from "@vercel/analytics/react";
 import { mountExperience } from "./experience/mountExperience";
 
 export default function App() {
@@ -18,6 +19,11 @@ export default function App() {
     };
   }, []);
 
-  return <div ref={hostRef} className="game-shell" style={{ width: "100vw", height: "100vh", position: "relative" }} />;
+  return (
+    <>
+      <div ref={hostRef} className="game-shell" style={{ width: "100vw", height: "100vh", position: "relative" }} />
+      <Analytics />
+    </>
+  );
 }
 

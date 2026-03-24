@@ -3,11 +3,12 @@ import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
 /**
  * Expected table `public.players` (enable RLS + policies in Supabase):
- * id uuid PK references auth.users, name text, worlds_awakened int, total_blooms int, time_played_ms bigint
+ * id uuid PK references auth.users, name text, spirit_look int, worlds_awakened int, total_blooms int, time_played_ms bigint
  */
 export type PlayerRow = {
   id: string;
   name: string;
+  spirit_look?: number | null;
   worlds_awakened: number;
   total_blooms: number;
   time_played_ms: number;
@@ -33,6 +34,7 @@ export async function ensureAndLoadPlayer(user: User): Promise<PlayerRow> {
     .insert({
       id: user.id,
       name: "New Spirit",
+      spirit_look: 0,
       worlds_awakened: 0,
       total_blooms: 0,
       time_played_ms: 0,
@@ -51,9 +53,10 @@ export async function loadPlayer(userId: string) {
 
 export async function updatePlayer(userId: string, data: Partial<PlayerRow>) {
   assertConfigured();
-  const { name, worlds_awakened, total_blooms, time_played_ms } = data;
+  const { name, spirit_look, worlds_awakened, total_blooms, time_played_ms } = data;
   const patch: Record<string, unknown> = {};
   if (name !== undefined) patch.name = name;
+  if (spirit_look !== undefined) patch.spirit_look = spirit_look;
   if (worlds_awakened !== undefined) patch.worlds_awakened = worlds_awakened;
   if (total_blooms !== undefined) patch.total_blooms = total_blooms;
   if (time_played_ms !== undefined) patch.time_played_ms = time_played_ms;

@@ -1,4 +1,19 @@
 import * as PIXI from "pixi.js";
+import { subscribeRestorationPresence, helpersToMultiplier } from "./lib/restorationPresence.ts";
+import {
+  SPIRIT_LOOK_COUNT,
+  SPIRIT_LOOKS,
+  SPIRIT_SWATCH_COLORS,
+  normalizeSpiritLook,
+  drawSpiritPortrait,
+} from "./sprites/spiritLooks.js";
+
+export {
+  SPIRIT_LOOK_COUNT,
+  SPIRIT_LOOKS,
+  SPIRIT_SWATCH_COLORS,
+  normalizeSpiritLook,
+} from "./sprites/spiritLooks.js";
 
 const WORLD_SIZE = 4200;
 const HALF_WORLD = WORLD_SIZE * 0.5;
@@ -44,29 +59,16 @@ export function createBackgroundTexture(width, height) {
   return PIXI.Texture.from(c);
 }
 
-function createSpiritTexture() {
+/**
+ * High-res portrait texture for the player spirit (plain orb or illustrated form).
+ * @param {number} lookIndex
+ */
+export function createSpiritTexture(lookIndex) {
   const c = document.createElement("canvas");
-  c.width = 196;
-  c.height = 196;
+  c.width = 256;
+  c.height = 256;
   const ctx = c.getContext("2d");
-  const cx = c.width * 0.5;
-  const cy = c.height * 0.5;
-
-  const outer = ctx.createRadialGradient(cx, cy, 8, cx, cy, 84);
-  outer.addColorStop(0, "rgba(230,255,228,0.62)");
-  outer.addColorStop(0.4, "rgba(160,225,168,0.34)");
-  outer.addColorStop(1, "rgba(160,225,168,0)");
-  ctx.fillStyle = outer;
-  ctx.fillRect(0, 0, c.width, c.height);
-
-  const body = ctx.createRadialGradient(cx, cy, 6, cx, cy, 32);
-  body.addColorStop(0, "rgba(244,255,236,0.95)");
-  body.addColorStop(0.7, "rgba(191,234,184,0.88)");
-  body.addColorStop(1, "rgba(145,200,143,0.55)");
-  ctx.fillStyle = body;
-  ctx.beginPath();
-  ctx.arc(cx, cy, 32, 0, Math.PI * 2);
-  ctx.fill();
+  drawSpiritPortrait(ctx, 256, lookIndex);
   return PIXI.Texture.from(c);
 }
 
@@ -95,8 +97,7 @@ function lifeToWorld(ix, iy) {
 }
 
 /**
- * Impressionistic garden blooms — soft radial blobs, strong saturation, no hard outlines
- * (painterly clusters inspired by lush path-side flower beds).
+ * Stylized trail/bloom flowers — distinct petals + stem (reads as flora, not soft balloons).
  */
 function makePainterlyFlowerTexture(variant) {
   const W = 128;
@@ -106,97 +107,159 @@ function makePainterlyFlowerTexture(variant) {
   c.height = H;
   const ctx = c.getContext("2d");
   const cx = W * 0.5;
-  const cy = H * 0.5;
+  const cy = H * 0.4;
 
-  const drawBlob = (dx, dy, rx, ry, rotation, rGrad, c0, c1, c2) => {
-    const x = cx + dx;
-    const y = cy + dy;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, rGrad);
-    g.addColorStop(0, c0);
-    g.addColorStop(0.48, c1);
-    g.addColorStop(1, c2);
+  const themes = [
+    { petalHi: "#ff6eb4", petalLo: "#ff9ec8", petalEdge: "#c83878", center: "#fff8c8", stem: "#2d6b42" },
+    { petalHi: "#ffd040", petalLo: "#ffe888", petalEdge: "#d09010", center: "#fffef0", stem: "#2d6b42" },
+    { petalHi: "#7ab0ff", petalLo: "#c8dcff", petalEdge: "#4070c8", center: "#f4f8ff", stem: "#2d6b42" },
+    { petalHi: "#ff9078", petalLo: "#ffc0b0", petalEdge: "#d85840", center: "#fff0e8", stem: "#2d6b42" },
+    { petalHi: "#e868c8", petalLo: "#c8a0ff", petalEdge: "#9030a0", center: "#fff5ff", stem: "#2d6b42" },
+  ];
+  const t = themes[variant % themes.length];
+
+  ctx.strokeStyle = t.stem;
+  ctx.lineWidth = 2.8;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(cx, cy + 14);
+  ctx.quadraticCurveTo(cx + 5, cy + 44, cx + 8, H - 20);
+  ctx.stroke();
+
+  ctx.fillStyle = t.stem;
+  for (const sx of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(cx, cy + 10);
+    ctx.lineTo(cx + sx * 16, cy + 26);
+    ctx.lineTo(cx, cy + 18);
+    ctx.fill();
+  }
+
+  const nPetals = 6 + (variant % 3);
+  const rx = 9 + (variant % 2);
+  const ry = 20 + (variant % 3);
+  for (let i = 0; i < nPetals; i += 1) {
+    const a = (i / nPetals) * Math.PI * 2 - Math.PI / 2;
     ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(rotation);
-    ctx.translate(-x, -y);
+    ctx.translate(cx, cy);
+    ctx.rotate(a);
+    const g = ctx.createLinearGradient(0, -ry - 8, 0, 6);
+    g.addColorStop(0, t.petalHi);
+    g.addColorStop(0.5, t.petalLo);
+    g.addColorStop(1, t.petalEdge);
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, -14, rx, ry, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-  };
+  }
 
-  const wisp = (x1, y1, x2, y2, col) => {
-    ctx.strokeStyle = col;
-    ctx.lineWidth = 1.4;
-    ctx.lineCap = "round";
-    ctx.globalAlpha = 0.35;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-  };
-
-  const palettes = [
-    // 0 — vivid pink / magenta cluster (carnation-like)
-    () => {
-      drawBlob(-22, -12, 30, 22, -0.35, 40, "rgba(255,140,205,1)", "rgba(255,75,155,0.72)", "rgba(255,40,120,0)");
-      drawBlob(20, 6, 26, 20, 0.45, 36, "rgba(255,175,220,1)", "rgba(255,95,175,0.68)", "rgba(255,50,130,0)");
-      drawBlob(-4, 22, 24, 18, 0.1, 34, "rgba(255,115,190,1)", "rgba(235,65,150,0.65)", "rgba(220,40,110,0)");
-      drawBlob(8, -18, 22, 16, 0.2, 30, "rgba(255,200,235,0.95)", "rgba(255,120,185,0.55)", "rgba(255,80,150,0)");
-      drawBlob(-14, 14, 18, 14, -0.2, 26, "rgba(255,160,210,1)", "rgba(250,90,165,0.5)", "rgba(230,50,120,0)");
-      wisp(cx - 40, cy + 48, cx - 36, cy + 58, "rgba(140,210,150,0.6)");
-      wisp(cx + 38, cy + 46, cx + 42, cy + 56, "rgba(130,200,145,0.55)");
-    },
-    // 1 — marigold / lemon / gold
-    () => {
-      drawBlob(-18, -8, 28, 22, -0.25, 38, "rgba(255,235,90,1)", "rgba(255,195,40,0.75)", "rgba(255,160,20,0)");
-      drawBlob(16, 10, 26, 20, 0.5, 34, "rgba(255,245,140,1)", "rgba(255,210,60,0.7)", "rgba(255,170,30,0)");
-      drawBlob(-6, 20, 22, 17, 0, 30, "rgba(255,220,100,1)", "rgba(255,180,50,0.65)", "rgba(240,140,20,0)");
-      drawBlob(10, -20, 20, 15, 0.3, 28, "rgba(255,250,200,0.95)", "rgba(255,200,80,0.55)", "rgba(255,160,40,0)");
-      wisp(cx - 35, cy + 50, cx - 30, cy + 60, "rgba(160,215,130,0.5)");
-    },
-    // 2 — periwinkle / lavender / sky blue
-    () => {
-      drawBlob(-20, -6, 28, 21, -0.3, 38, "rgba(165,195,255,1)", "rgba(120,155,245,0.75)", "rgba(80,120,230,0)");
-      drawBlob(18, 8, 25, 19, 0.4, 34, "rgba(200,185,255,1)", "rgba(150,130,240,0.68)", "rgba(110,90,210,0)");
-      drawBlob(-8, 22, 22, 17, 0.1, 30, "rgba(175,210,255,1)", "rgba(130,170,245,0.62)", "rgba(90,130,220,0)");
-      drawBlob(6, -18, 20, 15, 0.15, 28, "rgba(220,210,255,0.95)", "rgba(160,150,235,0.52)", "rgba(120,100,200,0)");
-    },
-    // 3 — coral / peach / warm pink
-    () => {
-      drawBlob(-18, -10, 29, 22, -0.28, 39, "rgba(255,155,145,1)", "rgba(255,110,100,0.74)", "rgba(255,70,70,0)");
-      drawBlob(20, 6, 26, 20, 0.42, 35, "rgba(255,200,175,1)", "rgba(255,140,120,0.68)", "rgba(255,90,80,0)");
-      drawBlob(-4, 20, 23, 17, 0, 31, "rgba(255,175,160,1)", "rgba(255,120,100,0.62)", "rgba(240,80,70,0)");
-      drawBlob(10, -16, 21, 16, 0.2, 29, "rgba(255,225,210,0.95)", "rgba(255,150,130,0.55)", "rgba(255,100,85,0)");
-    },
-    // 4 — fuchsia / deep rose with mint accents
-    () => {
-      drawBlob(-20, -8, 30, 22, -0.32, 40, "rgba(255,90,180,1)", "rgba(230,40,150,0.76)", "rgba(200,20,120,0)");
-      drawBlob(18, 10, 26, 20, 0.48, 36, "rgba(255,130,210,1)", "rgba(220,60,165,0.7)", "rgba(190,30,130,0)");
-      drawBlob(-6, 22, 23, 17, 0.08, 32, "rgba(240,80,170,1)", "rgba(200,50,140,0.64)", "rgba(170,25,100,0)");
-      drawBlob(8, -18, 20, 15, 0.18, 28, "rgba(255,200,230,0.92)", "rgba(255,100,180,0.52)", "rgba(220,50,130,0)");
-      drawBlob(-36, 28, 14, 10, 0.6, 18, "rgba(160,230,175,0.85)", "rgba(100,190,130,0.45)", "rgba(60,150,90,0)");
-      drawBlob(34, 26, 12, 9, -0.4, 16, "rgba(150,225,170,0.8)", "rgba(90,185,125,0.4)", "rgba(50,140,85,0)");
-    },
-  ];
-
-  palettes[variant % palettes.length]();
-
-  const cg = ctx.createRadialGradient(cx, cy, 0, cx, cy, 16);
-  cg.addColorStop(0, "rgba(255,255,250,0.95)");
-  cg.addColorStop(0.45, "rgba(255,255,240,0.35)");
-  cg.addColorStop(1, "rgba(255,255,255,0)");
+  const cg = ctx.createRadialGradient(cx, cy - 1, 0, cx, cy, 13);
+  cg.addColorStop(0, t.center);
+  cg.addColorStop(0.75, t.petalEdge);
+  cg.addColorStop(1, t.petalEdge);
   ctx.fillStyle = cg;
   ctx.beginPath();
-  ctx.arc(cx, cy, 16, 0, Math.PI * 2);
+  ctx.arc(cx, cy, 10, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "rgba(120,80,40,0.35)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
 
   return PIXI.Texture.from(c);
 }
 
-function makeEssenceTexture() {
+/** Soft watercolor tree clump for gradual world regrowth. */
+function makePainterlyTreeTexture(variant) {
+  const W = 156;
+  const H = 172;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext("2d");
+  const trunkX = W * 0.5;
+  const trunkBottom = H - 14;
+  const palettes = [
+    { leafA: "#355f3c", leafB: "#264a2f", leafC: "#4f7a54", trunk: "#5a4535" },
+    { leafA: "#2f5b39", leafB: "#21452a", leafC: "#466f4b", trunk: "#5a4636" },
+    { leafA: "#3a6540", leafB: "#2a5032", leafC: "#567f5a", trunk: "#624b38" },
+  ];
+  const p = palettes[variant % palettes.length];
+
+  ctx.strokeStyle = p.trunk;
+  ctx.lineCap = "round";
+  ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(trunkX, trunkBottom);
+  ctx.lineTo(trunkX, H * 0.46);
+  ctx.stroke();
+
+  const layers = 5;
+  for (let i = 0; i < layers; i += 1) {
+    const y = H * 0.42 + i * 18;
+    const w = 84 - i * 14 + (variant % 2) * 4;
+    const h = 44 - i * 6;
+    const gx = trunkX;
+    const gy = y;
+    const g = ctx.createRadialGradient(gx, gy - h * 0.18, 3, gx, gy, Math.max(w, h) * 0.62);
+    g.addColorStop(0, p.leafC);
+    g.addColorStop(0.5, p.leafA);
+    g.addColorStop(1, p.leafB);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(gx, gy - h);
+    ctx.lineTo(gx + w * 0.5, gy);
+    ctx.lineTo(gx, gy + h * 0.2);
+    ctx.lineTo(gx - w * 0.5, gy);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  return PIXI.Texture.from(c);
+}
+
+/** Inner “soul” glyph layered on the player spirit — matches {@link createSpiritTexture} themes. */
+function makeSoulTexture(lookIndex) {
+  const idx = normalizeSpiritLook(lookIndex);
+  const soulThemes = [
+    { glow: ["rgba(255,255,235,0.98)", "rgba(210,255,146,0.82)", "rgba(144,232,116,0.34)", "rgba(144,232,116,0)"], ring: "rgba(235,255,205,0.75)", cross: "rgba(255,255,235,0.55)" },
+    { glow: ["rgba(255,250,255,0.98)", "rgba(230,200,255,0.82)", "rgba(180,140,255,0.34)", "rgba(160,100,240,0)"], ring: "rgba(230,210,255,0.78)", cross: "rgba(255,245,255,0.55)" },
+    { glow: ["rgba(255,255,240,0.98)", "rgba(255,220,150,0.85)", "rgba(255,170,80,0.38)", "rgba(255,120,40,0)"], ring: "rgba(255,230,190,0.8)", cross: "rgba(255,255,240,0.58)" },
+    { glow: ["rgba(240,255,255,0.98)", "rgba(160,235,255,0.84)", "rgba(80,200,240,0.36)", "rgba(40,160,220,0)"], ring: "rgba(200,245,255,0.78)", cross: "rgba(240,255,255,0.58)" },
+    { glow: ["rgba(255,250,252,0.98)", "rgba(255,200,230,0.84)", "rgba(255,150,190,0.38)", "rgba(255,100,160,0)"], ring: "rgba(255,220,235,0.78)", cross: "rgba(255,250,252,0.58)" },
+    { glow: ["rgba(255,255,255,0.98)", "rgba(230,240,255,0.86)", "rgba(200,220,245,0.38)", "rgba(170,195,230,0)"], ring: "rgba(220,235,255,0.75)", cross: "rgba(255,255,255,0.58)" },
+  ];
+  const t = soulThemes[idx];
+  const c = document.createElement("canvas");
+  c.width = 120;
+  c.height = 120;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(60, 60, 3, 60, 60, 54);
+  g.addColorStop(0, t.glow[0]);
+  g.addColorStop(0.38, t.glow[1]);
+  g.addColorStop(0.72, t.glow[2]);
+  g.addColorStop(1, t.glow[3]);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.beginPath();
+  ctx.arc(60, 60, 22, 0, Math.PI * 2);
+  ctx.strokeStyle = t.ring;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(60, 42);
+  ctx.lineTo(60, 78);
+  ctx.moveTo(42, 60);
+  ctx.lineTo(78, 60);
+  ctx.strokeStyle = t.cross;
+  ctx.lineWidth = 1.8;
+  ctx.stroke();
+  return PIXI.Texture.from(c);
+}
+
+/** Collectible world essences — neutral green (not tied to player look). */
+function makeWorldEssenceTexture() {
   const c = document.createElement("canvas");
   c.width = 120;
   c.height = 120;
@@ -256,6 +319,167 @@ function makeSoftGlowTexture() {
   return PIXI.Texture.from(c);
 }
 
+/** Tiny world creatures — kinds 0–3 common, 4–5 rare (more glow). */
+function makeCritterTexture(kind) {
+  const c = document.createElement("canvas");
+  c.width = 56;
+  c.height = 56;
+  const ctx = c.getContext("2d");
+  const cx = 28;
+  const cy = 30;
+
+  const drawGlow = () => {
+    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, 22);
+    g.addColorStop(0, "rgba(255,255,235,0.45)");
+    g.addColorStop(1, "rgba(255,255,200,0)");
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
+    ctx.fill();
+  };
+
+  switch (kind) {
+    case 0: {
+      ctx.fillStyle = "rgba(195,165,130,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 4, 14, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(225,200,175,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(cx - 6, cy - 10, 5, 12, -0.3, 0, Math.PI * 2);
+      ctx.ellipse(cx + 6, cy - 10, 5, 12, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(40,35,30,0.85)";
+      ctx.beginPath();
+      ctx.arc(cx - 5, cy + 2, 2, 0, Math.PI * 2);
+      ctx.arc(cx + 5, cy + 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 1: {
+      ctx.fillStyle = "rgba(120,175,255,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy, 16, 11, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255,210,120,0.95)";
+      ctx.beginPath();
+      ctx.moveTo(cx + 14, cy);
+      ctx.lineTo(cx + 24, cy + 2);
+      ctx.lineTo(cx + 14, cy + 6);
+      ctx.fill();
+      ctx.fillStyle = "rgba(50,50,50,0.85)";
+      ctx.beginPath();
+      ctx.arc(cx - 6, cy - 2, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 2: {
+      ctx.fillStyle = "rgba(235,145,85,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2, 13, 12, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - 10, cy - 8);
+      ctx.lineTo(cx - 4, cy - 18);
+      ctx.lineTo(cx - 2, cy - 6);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + 10, cy - 8);
+      ctx.lineTo(cx + 4, cy - 18);
+      ctx.lineTo(cx + 2, cy - 6);
+      ctx.fill();
+      ctx.fillStyle = "rgba(40,35,30,0.85)";
+      ctx.beginPath();
+      ctx.arc(cx - 4, cy + 2, 2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 3: {
+      ctx.fillStyle = "rgba(195,185,175,0.95)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 4, 11, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(210,200,200,0.9)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(cx + 8, cy + 2);
+      ctx.bezierCurveTo(cx + 18, cy - 2, cx + 22, cy, cx + 18, cy + 4);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(cx - 8, cy + 2);
+      ctx.bezierCurveTo(cx - 18, cy - 2, cx - 22, cy, cx - 18, cy + 4);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(50,45,40,0.8)";
+      ctx.beginPath();
+      ctx.arc(cx - 3, cy + 2, 1.5, 0, Math.PI * 2);
+      ctx.arc(cx + 3, cy + 2, 1.5, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 4: {
+      // Large magical moth spirit.
+      drawGlow();
+      const wingG = ctx.createLinearGradient(cx - 20, cy - 16, cx + 20, cy + 16);
+      wingG.addColorStop(0, "rgba(255,170,240,0.98)");
+      wingG.addColorStop(0.5, "rgba(190,150,255,0.98)");
+      wingG.addColorStop(1, "rgba(130,220,255,0.98)");
+      ctx.fillStyle = wingG;
+      ctx.beginPath();
+      ctx.ellipse(cx - 14, cy - 2, 13, 20, -0.42, 0, Math.PI * 2);
+      ctx.ellipse(cx + 14, cy - 2, 13, 20, 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(95,60,150,0.98)";
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 4, 6, 15, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,245,255,0.92)";
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(cx - 3, cy - 10);
+      ctx.quadraticCurveTo(cx - 10, cy - 20, cx - 17, cy - 19);
+      ctx.moveTo(cx + 3, cy - 10);
+      ctx.quadraticCurveTo(cx + 10, cy - 20, cx + 17, cy - 19);
+      ctx.stroke();
+      break;
+    }
+    default: {
+      // Large magical fox-like spirit.
+      drawGlow();
+      const bodyG = ctx.createLinearGradient(cx - 18, cy - 10, cx + 18, cy + 16);
+      bodyG.addColorStop(0, "rgba(255,240,140,0.98)");
+      bodyG.addColorStop(0.55, "rgba(255,198,95,0.98)");
+      bodyG.addColorStop(1, "rgba(255,145,80,0.98)");
+      ctx.fillStyle = bodyG;
+      ctx.beginPath();
+      ctx.ellipse(cx, cy + 2, 16, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx - 9, cy - 5);
+      ctx.lineTo(cx - 16, cy - 21);
+      ctx.lineTo(cx - 3, cy - 12);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(cx + 9, cy - 5);
+      ctx.lineTo(cx + 16, cy - 21);
+      ctx.lineTo(cx + 3, cy - 12);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255,250,200,0.95)";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.moveTo(cx + 12, cy + 5);
+      ctx.quadraticCurveTo(cx + 22, cy + 2, cx + 24, cy + 11);
+      ctx.stroke();
+      ctx.fillStyle = "rgba(55,35,20,0.9)";
+      ctx.beginPath();
+      ctx.arc(cx - 5, cy + 1, 1.9, 0, Math.PI * 2);
+      ctx.arc(cx + 5, cy + 1, 1.9, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+  }
+  return PIXI.Texture.from(c);
+}
+
 function createSoundManager() {
   const Ctx = window.AudioContext || window.webkitAudioContext;
   const audioCtx = Ctx ? new Ctx() : null;
@@ -289,6 +513,37 @@ function createSoundManager() {
     gain.connect(sfxBus);
     osc.start(now);
     osc.stop(now + 3.05);
+  }
+
+  function playSurpriseCollectSound() {
+    if (!audioCtx || !sfxBus) return;
+    const now = audioCtx.currentTime;
+    const master = audioCtx.createGain();
+    master.gain.setValueAtTime(0.0001, now);
+    master.gain.exponentialRampToValueAtTime(0.16, now + 0.04);
+    master.gain.exponentialRampToValueAtTime(0.0001, now + 1.25);
+    master.connect(sfxBus);
+    const notes = [523.25, 659.25, 783.99];
+    for (let i = 0; i < notes.length; i += 1) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      const hp = audioCtx.createBiquadFilter();
+      hp.type = "highpass";
+      hp.frequency.value = 220;
+      osc.type = "triangle";
+      const start = now + i * 0.08;
+      const end = start + 0.34;
+      osc.frequency.setValueAtTime(notes[i], start);
+      osc.frequency.exponentialRampToValueAtTime(notes[i] * 1.55, end);
+      gain.gain.setValueAtTime(0.0001, start);
+      gain.gain.exponentialRampToValueAtTime(0.24 - i * 0.04, start + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.0001, end);
+      osc.connect(hp);
+      hp.connect(gain);
+      gain.connect(master);
+      osc.start(start);
+      osc.stop(end + 0.03);
+    }
   }
 
   const makeAudio = (candidates, { loop = false, volume = 0.25 } = {}) => {
@@ -332,6 +587,10 @@ function createSoundManager() {
   const playEffect = (name, volumeMul = 1) => {
     if (name === "collect") {
       playCollectSound();
+      return;
+    }
+    if (name === "surprise") {
+      playSurpriseCollectSound();
       return;
     }
     const source = name === "bloom" ? bloom : null;
@@ -379,6 +638,10 @@ export async function mountGame(hostEl, options = {}) {
     flowPlayerName = "Guest",
     onFlowProfile = () => {},
     onFlowLogout = () => {},
+    onFlowFeedback = () => {},
+    spiritLookId: initialSpiritLookId = 0,
+    gameModeId: initialGameModeId = "restoration",
+    gameModeLabel: initialGameModeLabel = "Endless Restoration",
   } = options;
 
   if (!injectedApp) {
@@ -407,12 +670,12 @@ export async function mountGame(hostEl, options = {}) {
   const depthLayer = new PIXI.Container();
   const lifeAuraLayer = new PIXI.Container();
   const floraLayer = new PIXI.Container();
+  const critterLayer = new PIXI.Container();
   const trailLayer = new PIXI.Container();
   const spiritLayer = new PIXI.Container();
   const particleLayer = new PIXI.Container();
   const weatherLayer = new PIXI.Container();
   const uiLayer = new PIXI.Container();
-  const flowTopBar = new PIXI.Container();
 
   root.addChild(backdropLayer);
   root.addChild(world);
@@ -420,6 +683,7 @@ export async function mountGame(hostEl, options = {}) {
   world.addChild(depthLayer);
   world.addChild(lifeAuraLayer);
   world.addChild(floraLayer);
+  world.addChild(critterLayer);
   world.addChild(trailLayer);
   world.addChild(spiritLayer);
   world.addChild(particleLayer);
@@ -450,7 +714,8 @@ export async function mountGame(hostEl, options = {}) {
   backdropLayer.addChild(bgTint);
 
   const lifeField = new Float32Array(LIFE_W * LIFE_H);
-  lifeField.fill(0.06);
+  lifeField.fill(0.01);
+  const trailMemory = new Float32Array(LIFE_W * LIFE_H);
   const lifeCanvas = makeLifeTextureCanvas();
   const lifeTex = PIXI.Texture.from(lifeCanvas.canvas);
   const lifeSprite = new PIXI.Sprite(lifeTex);
@@ -460,33 +725,31 @@ export async function mountGame(hostEl, options = {}) {
   lifeSprite.alpha = 0.56;
   lifeLayer.addChild(lifeSprite);
 
-  const spiritTexture = createSpiritTexture();
-  const spirit = new PIXI.Sprite(spiritTexture);
+  const spiritLookTextures = [];
+  const soulLookTextures = [];
+  for (let i = 0; i < SPIRIT_LOOK_COUNT; i += 1) {
+    spiritLookTextures.push(createSpiritTexture(i));
+    soulLookTextures.push(makeSoulTexture(i));
+  }
+  let activeSpiritLook = normalizeSpiritLook(initialSpiritLookId);
+
+  const spirit = new PIXI.Sprite(spiritLookTextures[activeSpiritLook]);
   spirit.anchor.set(0.5);
   spirit.scale.set(1.55);
   spiritLayer.addChild(spirit);
 
-  const soulTex = makeEssenceTexture();
-  const soul = new PIXI.Sprite(soulTex);
+  const soul = new PIXI.Sprite(soulLookTextures[activeSpiritLook]);
   soul.anchor.set(0.5);
   soul.scale.set(0.32);
   spirit.addChild(soul);
 
+  const applySpiritLook = (id) => {
+    activeSpiritLook = normalizeSpiritLook(id);
+    spirit.texture = spiritLookTextures[activeSpiritLook];
+    soul.texture = soulLookTextures[activeSpiritLook];
+  };
+
   const ghosts = [];
-  for (let i = 0; i < 4; i += 1) {
-    const g = new PIXI.Sprite(spiritTexture);
-    g.anchor.set(0.5);
-    g.scale.set(1.1);
-    g.alpha = 0.58;
-    g.tint = 0xc8ffd0;
-    g.x = (Math.random() * 2 - 1) * 900;
-    g.y = (Math.random() * 2 - 1) * 900;
-    g._tx = g.x;
-    g._ty = g.y;
-    g._retarget = 300 + Math.random() * 1200;
-    spiritLayer.addChild(g);
-    ghosts.push(g);
-  }
 
   const trail = [];
   const trailGfx = new PIXI.Graphics();
@@ -502,10 +765,23 @@ export async function mountGame(hostEl, options = {}) {
     makePainterlyFlowerTexture(4),
   ];
   const flowers = [];
+  const treeTextures = [makePainterlyTreeTexture(0), makePainterlyTreeTexture(1), makePainterlyTreeTexture(2)];
+  const trees = [];
   const bloomBursts = [];
 
   const essences = [];
-  const essenceTex = makeEssenceTexture();
+  const boosterDrops = [];
+  let boosterDropTimerMs = 4500 + Math.random() * 3000;
+  const essenceTex = makeWorldEssenceTexture();
+  const critterTextures = [0, 1, 2, 3, 4, 5].map((k) => makeCritterTexture(k));
+  const worldCritters = [];
+  let commonCritterTimerMs = 11000 + Math.random() * 14000;
+  let specialCritterTimerMs = 72000 + Math.random() * 90000;
+  /** Periodic “surprise” — extra essence + bloom so the world feels less static. */
+  let surpriseTimerMs = 36000 + Math.random() * 24000;
+  let collectedCrittersCommon = 0;
+  let collectedCrittersRare = 0;
+  const SPECIAL_SURPRISE_SCALE_MUL = 3;
   const ambientMotes = [];
   const playerMotes = [];
   const lifeAuras = [];
@@ -516,8 +792,53 @@ export async function mountGame(hostEl, options = {}) {
   const velocity = { x: 0, y: 0 };
   let energy = 0;
   let level = 1;
+  let hintOverrideMs = 0;
+  let helpPanelOpen = false;
+  let menuOpen = false;
 
   const weather = { kind: "sunny", timer: 65000 };
+  /** Global tuning: lower = slower restoration (all sources scale here). */
+  const BASE_WORLD_GAIN_SCALE = 0.064;
+  let helperPresenceCount = 1;
+  let helperMultiplier = 1;
+  let coopResonanceTimerMs = 6200;
+  let coopHintShown = false;
+  /** @type {{ name: string }[]} */
+  let presencePeers = [];
+  let playerDisplayName = flowPlayerName;
+  let gameModeId = initialGameModeId;
+  let gameModeLabel = initialGameModeLabel;
+
+  /** Bottom boosters — consumable-style counts (UI); gameplay hooks below. */
+  const LURE_DURATION_MS = 12000;
+  const SURGE_DURATION_MS = 6500;
+  let lureCharges = 1;
+  let surgeCharges = 1;
+  let sightCharges = 1;
+  const LURE_MAX = 12;
+  const SURGE_MAX = 10;
+  const SIGHT_MAX = 8;
+  let lureActiveMs = 0;
+  let surgeBoostMs = 0;
+  let lureFxTimerMs = 0;
+  let surgeFxTimerMs = 0;
+  let lurePulseMs = 0;
+  let surgePulseMs = 0;
+  let sightPulseMs = 0;
+  /** 0–2: wider field of view when using Sight. */
+  let sightZoomStep = 0;
+
+  const truncHudName = (s, max = 13) => {
+    const t = (s || "").trim() || "Guest";
+    return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+  };
+
+  const presenceSub = subscribeRestorationPresence(flowPlayerName, (u) => {
+    helperPresenceCount = u.count;
+    helperMultiplier = u.multiplier;
+    presencePeers = u.peers;
+  });
+
   let worldLife = 0;
   const worldMilestones = [25, 50, 75];
   let nextMilestoneIdx = 0;
@@ -529,87 +850,34 @@ export async function mountGame(hostEl, options = {}) {
   let naturalBloomTimer = 4000 + Math.random() * 2000;
   let afterglowMotesAdded = false;
   const AWAKENING_TOTAL_MS = 4200;
-  const awakeningMessages = ["The world remembers", "Life returns", "What was lost, returns"];
+  let worldCycle = 0;
+  let worldVariation = 0;
+  let worldResetPendingMs = 0;
+  let firstMoveReactionShown = false;
+  /** Energy thresholds for levels 2–4 (shown in HUD). */
+  const LEVEL_ENERGY_THRESHOLDS = [30, 70, 120];
 
-  const energyText = new PIXI.Text({
-    text: "Energy: 0",
-    style: { fill: 0xe6ffe3, fontFamily: "Montserrat", fontSize: 16, fontWeight: "600" },
-  });
-  energyText.x = 16;
-  energyText.y = 12;
-  uiLayer.addChild(energyText);
-
-  const levelText = new PIXI.Text({
-    text: "Level: 1",
-    style: { fill: 0xc8ffd6, fontFamily: "Montserrat", fontSize: 14, fontWeight: "600" },
-  });
-  levelText.x = 16;
-  levelText.y = 34;
-  uiLayer.addChild(levelText);
-
-  const goalText = new PIXI.Text({
-    text: "Gather essence • Let your restoration flow through the land — both matter.",
+  const toastText = new PIXI.Text({
+    text: "",
     style: {
-      fill: 0xa8d4b4,
+      fill: 0xd8f0e4,
       fontFamily: "Montserrat",
-      fontSize: 11,
+      fontSize: 13,
       fontWeight: "500",
       align: "center",
       wordWrap: true,
-      wordWrapWidth: 520,
+      wordWrapWidth: 560,
     },
   });
-  goalText.anchor.set(0.5, 0);
-  uiLayer.addChild(goalText);
-
-  const whisperPool = [
-    "Something was here once",
-    "It feels familiar",
-    "Life is returning",
-    "The world remembers",
-    "You are not alone here",
-    "It is waking",
-  ];
-  let whisperCooldownMs = 22000 + Math.random() * 12000;
-  let whisperPhase = 0;
-  let whisperPhaseMs = 0;
-  const whisperText = new PIXI.Text({
-    text: "",
-    style: {
-      fill: 0xa8c9b8,
-      fontFamily: "Montserrat, Georgia, serif",
-      fontSize: 13,
-      fontWeight: "400",
-      fontStyle: "italic",
-      align: "center",
-      wordWrap: true,
-      wordWrapWidth: 440,
-    },
-  });
-  whisperText.anchor.set(0.5);
-  whisperText.alpha = 0;
-  uiLayer.addChild(whisperText);
-
-  const hintText = new PIXI.Text({
-    text: "Walk gently",
-    style: { fill: 0xe8ffe0, fontFamily: "Montserrat", fontSize: 14, fontWeight: "500" },
-  });
-  uiLayer.addChild(hintText);
-
-  const weatherText = new PIXI.Text({
-    text: "Weather: Sunny",
-    style: { fill: 0xe8ffe0, fontFamily: "Montserrat", fontSize: 13, fontWeight: "600" },
-  });
-  weatherText.x = 16;
-  weatherText.y = 56;
-  const hudPanel = new PIXI.Graphics();
-  uiLayer.addChild(hudPanel);
-  uiLayer.addChild(weatherText);
+  toastText.anchor.set(0.5, 0);
+  const critterGuide = new PIXI.Graphics();
+  critterGuide.alpha = 0;
+  uiLayer.addChild(critterGuide);
 
   const worldBarBg = new PIXI.Graphics();
   const worldBarFill = new PIXI.Graphics();
   const worldBarLabel = new PIXI.Text({
-    text: "World Restoration",
+    text: "World Awakening",
     style: { fill: 0xe5ffe3, fontFamily: "Montserrat", fontSize: 12, fontWeight: "600" },
   });
   uiLayer.addChild(worldBarBg);
@@ -639,80 +907,533 @@ export async function mountGame(hostEl, options = {}) {
   const miniMap = new PIXI.Sprite(miniMapTex);
   miniMap.alpha = 0.48;
   miniMap.tint = 0xb8d6be;
-  uiLayer.addChild(miniMapBg);
-  uiLayer.addChild(miniMap);
-  uiLayer.addChild(miniMapDots);
 
   const HUD_SHIFT_Y = 40;
 
-  const flowPlayerLabel = new PIXI.Text({
-    text: flowPlayerName,
-    style: { fill: 0xc8e8d4, fontFamily: "Montserrat", fontSize: 13, fontWeight: "500" },
+  const hudPanel = new PIXI.Graphics();
+  const leaderboardHeader = new PIXI.Text({
+    text: "",
+    style: { fill: 0xe8fff0, fontFamily: "Montserrat", fontSize: 12, fontWeight: "600" },
   });
-  const flowProfile = new PIXI.Text({
-    text: "Profile",
-    style: { fill: 0xa8d4c0, fontFamily: "Montserrat", fontSize: 13, fontWeight: "500" },
+  const leaderboardSub = new PIXI.Text({
+    text: "",
+    style: { fontFamily: "Montserrat", fontSize: 10, fill: 0x9ec4ae, fontWeight: "500" },
   });
-  flowProfile.eventMode = "static";
-  flowProfile.cursor = "pointer";
-  flowProfile.alpha = 0.62;
-  flowProfile.on("pointerover", () => {
-    flowProfile.alpha = 1;
+  const leaderboardList = new PIXI.Text({
+    text: "",
+    style: {
+      fill: 0xc8e8d4,
+      fontFamily: "Montserrat",
+      fontSize: 11,
+      fontWeight: "500",
+      lineHeight: 15,
+      wordWrap: true,
+      wordWrapWidth: 214,
+    },
   });
-  flowProfile.on("pointerout", () => {
-    flowProfile.alpha = 0.62;
+  const leaderboardSelfRow = new PIXI.Text({
+    text: "",
+    style: { fill: 0xffe8a8, fontFamily: "Montserrat", fontSize: 11, fontWeight: "700", lineHeight: 15 },
   });
-  flowProfile.on("pointerdown", () => onFlowProfile());
+  const leaderboardHi = new PIXI.Graphics();
+  const leftHud = new PIXI.Container();
+  leftHud.addChild(hudPanel);
+  leftHud.addChild(leaderboardHi);
+  leftHud.addChild(leaderboardHeader);
+  leftHud.addChild(leaderboardSub);
+  leftHud.addChild(leaderboardList);
+  leftHud.addChild(leaderboardSelfRow);
+  uiLayer.addChild(leftHud);
 
-  const flowLogout = new PIXI.Text({
-    text: "Logout",
-    style: { fill: 0xa8d4c0, fontFamily: "Montserrat", fontSize: 13, fontWeight: "500" },
+  const rightHud = new PIXI.Container();
+  const currencyBg = new PIXI.Graphics();
+  const currencyIcon = new PIXI.Sprite(essenceTex);
+  currencyIcon.anchor.set(0.5);
+  const surprisesBg = new PIXI.Graphics();
+  const surprisesIcon = new PIXI.Graphics();
+  const currencyLabel = new PIXI.Text({
+    text: "Essence",
+    style: { fontFamily: "Montserrat", fontSize: 10, fill: 0xa8d4bc, fontWeight: "600" },
   });
-  flowLogout.eventMode = "static";
-  flowLogout.cursor = "pointer";
-  flowLogout.alpha = 0.62;
-  flowLogout.on("pointerover", () => {
-    flowLogout.alpha = 1;
+  const currencyValue = new PIXI.Text({
+    text: "0",
+    style: {
+      fontFamily: "Montserrat",
+      fontSize: 18,
+      fontWeight: "700",
+      fill: 0xfff8e0,
+      dropShadow: { alpha: 0.35, angle: Math.PI / 2, blur: 3, color: 0x0a3018, distance: 1 },
+    },
   });
-  flowLogout.on("pointerout", () => {
-    flowLogout.alpha = 0.62;
+  const surprisesLabel = new PIXI.Text({
+    text: "Magical creatures",
+    style: { fontFamily: "Montserrat", fontSize: 10, fill: 0xa8d4bc, fontWeight: "600" },
   });
-  flowLogout.on("pointerdown", () => onFlowLogout());
+  const surprisesValue = new PIXI.Text({
+    text: "0",
+    style: {
+      fontFamily: "Montserrat",
+      fontSize: 18,
+      fontWeight: "700",
+      fill: 0xfff8e0,
+      dropShadow: { alpha: 0.35, angle: Math.PI / 2, blur: 3, color: 0x0a3018, distance: 1 },
+    },
+  });
+  rightHud.addChild(currencyBg);
+  rightHud.addChild(currencyIcon);
+  rightHud.addChild(currencyLabel);
+  rightHud.addChild(currencyValue);
+  rightHud.addChild(surprisesBg);
+  rightHud.addChild(surprisesIcon);
+  rightHud.addChild(surprisesLabel);
+  rightHud.addChild(surprisesValue);
+  rightHud.addChild(miniMapBg);
+  rightHud.addChild(miniMap);
+  rightHud.addChild(miniMapDots);
+  uiLayer.addChild(rightHud);
 
-  flowTopBar.addChild(flowPlayerLabel);
-  flowTopBar.addChild(flowProfile);
-  flowTopBar.addChild(flowLogout);
-  uiLayer.addChild(flowTopBar);
+  const helpTitle = new PIXI.Text({
+    text: "How to play",
+    style: { fill: 0xe8fff0, fontFamily: "Montserrat", fontSize: 22, fontWeight: "600" },
+  });
+  const helpBody = new PIXI.Text({
+    text: "",
+    style: {
+      fill: 0xc8ead4,
+      fontFamily: "Montserrat",
+      fontSize: 15,
+      fontWeight: "500",
+      lineHeight: 23,
+      wordWrap: true,
+      wordWrapWidth: 460,
+    },
+  });
+  const helpHint = new PIXI.Text({
+    text: "Click outside or press Esc to close",
+    style: { fill: 0x8ab89a, fontFamily: "Montserrat", fontSize: 12, fontWeight: "500" },
+  });
+  const helpPanelGfx = new PIXI.Graphics();
+  const helpPanelInner = new PIXI.Container();
+  helpPanelInner.eventMode = "static";
+  helpPanelInner.cursor = "default";
+  helpPanelInner.on("pointerdown", (e) => e.stopPropagation());
+  const helpDim = new PIXI.Graphics();
+  helpDim.eventMode = "static";
+  helpDim.cursor = "pointer";
+  helpDim.on("pointerdown", () => {
+    helpPanelOpen = false;
+    helpOverlay.visible = false;
+  });
+  const helpOverlay = new PIXI.Container();
+  helpOverlay.visible = false;
+  helpOverlay.addChild(helpDim);
+  helpOverlay.addChild(helpPanelInner);
+  helpPanelInner.addChild(helpPanelGfx);
+  helpPanelInner.addChild(helpTitle);
+  helpPanelInner.addChild(helpBody);
+  helpPanelInner.addChild(helpHint);
+
+  const buildHelpBodyText = () =>
+    [
+      "GOAL",
+      "Fill World Awakening (top bar) to 100%. The world answers with a Great Bloom.",
+      "",
+      "CONTROLS",
+      "Move with the pointer, or WASD. Hold Space (or hold mouse) to boost.",
+      "",
+      "COLLECT",
+      "Yellow essence: Energy and world restoration. Small animals you meet add extra restoration (tracked in play, not on the main HUD).",
+      "",
+      "LEVELS",
+      `Rise at Energy ${LEVEL_ENERGY_THRESHOLDS.join(", ")}. Higher levels: stronger glow and faster life paint.`,
+      "",
+      "OTHER SPIRITS",
+      "Top-left lists spirits in your session (you’re highlighted). Growing together is stronger: nearby spirits create co-op resonance that speeds awakening.",
+    ].join("\n");
+
+  const layoutHelpOverlay = () => {
+    const w = app.screen.width;
+    const h = app.screen.height;
+    helpDim.clear();
+    helpDim.rect(0, 0, w, h).fill({ color: 0x061208, alpha: 0.78 });
+    const pw = Math.min(520, w - 28);
+    helpBody.style.wordWrapWidth = pw - 40;
+    helpBody.text = buildHelpBodyText();
+    const pad = 22;
+    const titleH = 36;
+    helpTitle.x = pad;
+    helpTitle.y = pad;
+    helpBody.x = pad;
+    helpBody.y = pad + titleH;
+    helpHint.x = pad;
+    helpHint.y = helpBody.y + helpBody.height + 12;
+    const boxW = pw;
+    const boxH = helpHint.y + helpHint.height + pad;
+    helpPanelGfx.clear();
+    helpPanelGfx.roundRect(0, 0, boxW, boxH, 16).fill({ color: 0x13251a, alpha: 0.96 });
+    helpPanelGfx.roundRect(0, 0, boxW, boxH, 16).stroke({ width: 1, color: 0x9ed9b0, alpha: 0.35 });
+    helpPanelInner.x = w * 0.5 - boxW * 0.5;
+    helpPanelInner.y = h * 0.5 - boxH * 0.5;
+  };
+
+  const menuBackdrop = new PIXI.Graphics();
+  menuBackdrop.eventMode = "static";
+  menuBackdrop.cursor = "default";
+  menuBackdrop.visible = false;
+  menuBackdrop.on("pointerdown", () => {
+    menuOpen = false;
+    menuBackdrop.visible = false;
+    menuDropdown.visible = false;
+  });
+
+  const menuDropdown = new PIXI.Container();
+  menuDropdown.visible = false;
+  menuDropdown.eventMode = "static";
+  menuDropdown.on("pointerdown", (e) => e.stopPropagation());
+  const menuPanelBg = new PIXI.Graphics();
+  const menuItemStyle = { fill: 0xd8f0e4, fontFamily: "Montserrat", fontSize: 14, fontWeight: "500" };
+  const menuProfile = new PIXI.Text({ text: "Profile", style: menuItemStyle });
+  const menuLogout = new PIXI.Text({ text: "Logout", style: menuItemStyle });
+  const menuRowH = 36;
+  const menuPad = 12;
+  const menuW = 176;
+  for (const t of [menuProfile, menuLogout]) {
+    t.eventMode = "static";
+    t.cursor = "pointer";
+  }
+  menuProfile.on("pointerdown", (e) => {
+    e.stopPropagation();
+    menuOpen = false;
+    menuBackdrop.visible = false;
+    menuDropdown.visible = false;
+    onFlowProfile();
+  });
+  menuLogout.on("pointerdown", (e) => {
+    e.stopPropagation();
+    menuOpen = false;
+    menuBackdrop.visible = false;
+    menuDropdown.visible = false;
+    onFlowLogout();
+  });
+  menuDropdown.addChild(menuPanelBg);
+  menuDropdown.addChild(menuProfile);
+  menuDropdown.addChild(menuLogout);
+
+  const menuBtn = new PIXI.Container();
+  menuBtn.eventMode = "static";
+  menuBtn.cursor = "pointer";
+  const menuBtnBg = new PIXI.Graphics();
+  const menuBtnIcon = new PIXI.Text({
+    text: "☰",
+    style: { fill: 0xeafff0, fontFamily: "Montserrat", fontSize: 22, fontWeight: "600" },
+  });
+  menuBtnIcon.anchor.set(0.5);
+  menuBtn.addChild(menuBtnBg);
+  menuBtn.addChild(menuBtnIcon);
+  menuBtn.on("pointerdown", (e) => {
+    e.stopPropagation();
+    menuOpen = !menuOpen;
+    menuBackdrop.visible = menuOpen;
+    menuDropdown.visible = menuOpen;
+    if (menuOpen) layoutMenuUI();
+  });
+  const feedbackQuickBtn = new PIXI.Container();
+  feedbackQuickBtn.eventMode = "static";
+  feedbackQuickBtn.cursor = "pointer";
+  const feedbackQuickBg = new PIXI.Graphics();
+  const feedbackQuickText = new PIXI.Text({
+    text: "Feedback",
+    style: { fill: 0xd8f0e4, fontFamily: "Montserrat", fontSize: 12, fontWeight: "600" },
+  });
+  feedbackQuickText.anchor.set(0.5);
+  feedbackQuickBtn.addChild(feedbackQuickBg);
+  feedbackQuickBtn.addChild(feedbackQuickText);
+  feedbackQuickBtn.on("pointerdown", (e) => {
+    e.stopPropagation();
+    onFlowFeedback();
+  });
+  feedbackQuickBtn.on("pointerover", () => {
+    feedbackQuickBg.clear();
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).fill({ color: 0x214a36, alpha: 0.94 });
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).stroke({ width: 1, color: 0xbff2cf, alpha: 0.62 });
+  });
+  feedbackQuickBtn.on("pointerout", () => {
+    feedbackQuickBg.clear();
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).fill({ color: 0x1a3d2c, alpha: 0.92 });
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).stroke({ width: 1, color: 0x9fdcb2, alpha: 0.46 });
+  });
+
+  const boosterD = 56;
+  const bottomHud = new PIXI.Container();
+  const drawBoosterBg = (g, hover, enabled) => {
+    g.clear();
+    const a = enabled ? 0.94 : 0.32;
+    const stroke = enabled ? 0xe8c878 : 0x5a7068;
+    const fill = hover && enabled ? 0x1a4080 : 0x142a5a;
+    g.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.5 - 1).fill({ color: fill, alpha: a });
+    g.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.5 - 1).stroke({ width: 2, color: stroke, alpha: enabled ? 0.55 : 0.2 });
+  };
+  /**
+   * @param {string} iconChar
+   * @param {string} startBadge
+   * @param {() => void} onTap
+   * @param {string} hotkey
+   * @param {string} label
+   */
+  const makeBoosterSlot = (iconChar, startBadge, onTap, hotkey, label) => {
+    const wrap = new PIXI.Container();
+    const bg = new PIXI.Graphics();
+    const ic = new PIXI.Text({ text: iconChar, style: { fontSize: 25 } });
+    ic.anchor.set(0.5);
+    ic.x = boosterD * 0.5;
+    ic.y = boosterD * 0.5;
+    const badge = new PIXI.Graphics();
+    const bt = new PIXI.Text({
+      text: startBadge,
+      style: { fontFamily: "Montserrat", fontSize: 11, fontWeight: "700", fill: 0x0a1010 },
+    });
+    bt.anchor.set(0.5);
+    bt.x = boosterD - 8;
+    bt.y = boosterD - 8;
+    badge.circle(boosterD - 8, boosterD - 8, 10).fill({ color: 0xfafefe, alpha: 0.95 });
+    const hkBg = new PIXI.Graphics();
+    hkBg.circle(boosterD * 0.5, boosterD + 10, 11).fill({ color: 0x1a3028, alpha: 0.92 });
+    hkBg.circle(boosterD * 0.5, boosterD + 10, 11).stroke({ width: 1, color: 0xb8f7be, alpha: 0.25 });
+    const hk = new PIXI.Text({
+      text: hotkey,
+      style: { fontFamily: "Montserrat", fontSize: 11, fontWeight: "700", fill: 0xd8f0e4 },
+    });
+    hk.anchor.set(0.5);
+    hk.x = boosterD * 0.5;
+    hk.y = boosterD + 10;
+    const lb = new PIXI.Text({
+      text: label,
+      style: { fontFamily: "Montserrat", fontSize: 10, fontWeight: "600", fill: 0xb8dccc },
+    });
+    lb.anchor.set(0.5);
+    lb.x = boosterD * 0.5;
+    lb.y = boosterD + 24;
+    const timerBack = new PIXI.Graphics();
+    const timerFill = new PIXI.Graphics();
+    wrap.addChild(bg);
+    wrap.addChild(ic);
+    wrap.addChild(badge);
+    wrap.addChild(bt);
+    wrap.addChild(hkBg);
+    wrap.addChild(hk);
+    wrap.addChild(lb);
+    wrap.addChild(timerBack);
+    wrap.addChild(timerFill);
+    wrap.eventMode = "static";
+    wrap.cursor = "pointer";
+    wrap.hitArea = new PIXI.Rectangle(0, 0, boosterD, boosterD + 34);
+    let enabled = true;
+    const paint = (hover) => drawBoosterBg(bg, hover, enabled);
+    paint(false);
+    wrap.on("pointerover", () => paint(true));
+    wrap.on("pointerout", () => paint(false));
+    wrap.on("pointerdown", (e) => {
+      e.stopPropagation();
+      if (gamePaused) return;
+      onTap();
+    });
+    const drawTimer = (progress) => {
+      timerBack.clear();
+      timerFill.clear();
+      if (progress <= 0.001) return;
+      const p = Math.max(0, Math.min(1, progress));
+      const tw = 34;
+      const th = 4;
+      const tx = boosterD * 0.5 - tw * 0.5;
+      const ty = boosterD - 8;
+      timerBack.roundRect(tx, ty, tw, th, 3).fill({ color: 0x06120d, alpha: 0.72 });
+      timerFill.roundRect(tx, ty, tw * p, th, 3).fill({ color: 0x9ee8a8, alpha: 0.95 });
+    };
+    return {
+      wrap,
+      setBadge: (t) => {
+        bt.text = t;
+      },
+      setEnabled: (v) => {
+        enabled = v;
+        wrap.eventMode = v ? "static" : "passive";
+        wrap.cursor = v ? "pointer" : "default";
+        paint(false);
+      },
+      setTimerProgress: (progress) => drawTimer(progress),
+    };
+  };
+  const fireLure = () => {
+    if (lureCharges <= 0) {
+      hintOverrideMs = 2200;
+      toastText.text = "Lure is empty. Find a blossom pickup.";
+      return;
+    }
+    lureCharges -= 1;
+    lureActiveMs = LURE_DURATION_MS;
+    lureFxTimerMs = 0;
+    lurePulseMs = 700;
+    sounds.playEffect("collect", 0.55);
+    hintOverrideMs = 2400;
+    toastText.text = "Lure active: larger essence pickup radius.";
+    spawnBloomEvent(player.x, player.y, 1.05, { awardWorldLife: false, particleMult: 1.05 });
+    screenGlowMs = Math.max(screenGlowMs, 220);
+  };
+  const fireSurge = () => {
+    if (surgeCharges <= 0) {
+      hintOverrideMs = 2200;
+      toastText.text = "Surge is empty. Find a spark pickup.";
+      return;
+    }
+    surgeCharges -= 1;
+    surgeBoostMs = SURGE_DURATION_MS;
+    surgeFxTimerMs = 0;
+    surgePulseMs = 760;
+    hintOverrideMs = 1800;
+    toastText.text = "Surge active: faster movement for a short burst.";
+    spawnBloomEvent(player.x, player.y, 1.2, { awardWorldLife: false, particleMult: 1.15 });
+    screenGlowMs = Math.max(screenGlowMs, 320);
+  };
+  const fireSight = () => {
+    if (sightCharges <= 0) {
+      hintOverrideMs = 2200;
+      toastText.text = "Sight is empty. Find an eye pickup.";
+      return;
+    }
+    sightCharges -= 1;
+    sightPulseMs = 680;
+    sightZoomStep = (sightZoomStep + 1) % 3;
+    hintOverrideMs = 2200;
+    const sightNames = ["Near view", "Balanced view", "Far view"];
+    toastText.text = `Sight active: ${sightNames[sightZoomStep]}.`;
+    spawnBloomEvent(player.x, player.y, 0.95, { awardWorldLife: false, particleMult: 0.9 });
+  };
+  const boosterLure = makeBoosterSlot("🌸", String(lureCharges), fireLure, "Z", "Lure");
+  const boosterSurge = makeBoosterSlot("⚡", String(surgeCharges), fireSurge, "X", "Surge");
+  const boosterSight = makeBoosterSlot("◇", String(sightCharges), fireSight, "C", "Sight");
+  bottomHud.addChild(boosterLure.wrap);
+  bottomHud.addChild(boosterSurge.wrap);
+  bottomHud.addChild(boosterSight.wrap);
+
+  rightHud.addChild(menuBtn);
+  rightHud.addChild(feedbackQuickBtn);
+  uiLayer.addChild(bottomHud);
+  uiLayer.addChild(menuBackdrop);
+  uiLayer.addChild(menuDropdown);
+  uiLayer.addChild(helpOverlay);
+  uiLayer.addChild(toastText);
+
+  const layoutMenuUI = () => {
+    const hb = 44;
+    menuBtnBg.clear();
+    menuBtnBg.roundRect(0, 0, hb, hb, 12).fill({ color: 0x1a3d2c, alpha: 0.9 });
+    menuBtnBg.roundRect(0, 0, hb, hb, 12).stroke({ width: 1, color: 0xa8e8c0, alpha: 0.5 });
+    menuBtnIcon.x = hb * 0.5;
+    menuBtnIcon.y = hb * 0.5;
+    const boxH = menuPad * 2 + menuRowH * 2;
+    menuPanelBg.clear();
+    menuPanelBg.roundRect(0, 0, menuW, boxH, 12).fill({ color: 0x13251a, alpha: 0.96 });
+    menuPanelBg.roundRect(0, 0, menuW, boxH, 12).stroke({ width: 1, color: 0x9ed9b0, alpha: 0.35 });
+    menuProfile.x = menuPad;
+    menuProfile.y = menuPad;
+    menuLogout.x = menuPad;
+    menuLogout.y = menuPad + menuRowH;
+    menuDropdown.x = menuBtn.x - menuW + hb;
+    menuDropdown.y = menuBtn.y + hb + 6;
+    feedbackQuickBg.clear();
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).fill({ color: 0x1a3d2c, alpha: 0.92 });
+    feedbackQuickBg.roundRect(0, 0, 96, 32, 10).stroke({ width: 1, color: 0x9fdcb2, alpha: 0.46 });
+    feedbackQuickText.x = 48;
+    feedbackQuickText.y = 16;
+    menuBackdrop.clear();
+    menuBackdrop.rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0x061208, alpha: 0.4 });
+  };
 
   const layoutUI = () => {
     const h = HUD_SHIFT_Y;
-    energyText.y = 12 + h;
-    levelText.y = 34 + h;
-    weatherText.y = 56 + h;
-
+    const topY = 10 + h;
+    const pad = 10;
+    const lbW = Math.min(228, Math.floor(app.screen.width * 0.48));
+    const LB_H = 192;
+    leaderboardHeader.x = pad + 12;
+    leaderboardHeader.y = topY;
+    leaderboardSub.x = pad + 12;
+    leaderboardSub.y = topY + 18;
+    leaderboardList.x = pad + 12;
+    leaderboardList.y = topY + 36;
+    leaderboardList.style.wordWrapWidth = lbW - 20;
     hudPanel.clear();
-    hudPanel.roundRect(8, 8 + h, 174, 70, 10).fill({ color: 0x10271b, alpha: 0.34 });
-    hudPanel.roundRect(8, 8 + h, 174, 70, 10).stroke({ width: 1, color: 0xb5e8b7, alpha: 0.14 });
-    goalText.x = app.screen.width * 0.5;
-    goalText.y = app.screen.height - 58;
-    goalText.style.wordWrapWidth = Math.min(560, app.screen.width - 32);
-    whisperText.style.wordWrapWidth = Math.min(440, app.screen.width - 48);
-    whisperText.x = app.screen.width * 0.5;
-    whisperText.y = app.screen.height * 0.38;
-    hintText.x = app.screen.width * 0.5 - hintText.width * 0.5;
-    hintText.y = app.screen.height - 30;
-    const s = 150;
-    const x = app.screen.width - s - 16;
-    const y = 16 + h;
-    miniMap.x = x;
-    miniMap.y = y;
+    hudPanel.roundRect(pad, topY, lbW, LB_H, 10).fill({ color: 0x10271b, alpha: 0.42 });
+    hudPanel.roundRect(pad, topY, lbW, LB_H, 10).stroke({ width: 1, color: 0xb5e8b7, alpha: 0.22 });
+
+    const marginR = 14;
+    const hb = 44;
+    const menuX = app.screen.width - marginR - hb;
+    menuBtn.x = menuX;
+    menuBtn.y = topY;
+    feedbackQuickBtn.x = menuX - 102;
+    feedbackQuickBtn.y = topY + 6;
+    const currencyW = 140;
+    const currencyH = 40;
+    const currencyX = app.screen.width - marginR - currencyW;
+    const currencyY = topY + hb + 8;
+    currencyBg.clear();
+    currencyBg.roundRect(0, 0, currencyW, currencyH, 12).fill({ color: 0x13251a, alpha: 0.92 });
+    currencyBg.roundRect(0, 0, currencyW, currencyH, 12).stroke({ width: 1, color: 0xd8c878, alpha: 0.3 });
+    currencyBg.x = currencyX;
+    currencyBg.y = currencyY;
+    currencyIcon.x = currencyX + 18;
+    currencyIcon.y = currencyY + currencyH * 0.5;
+    currencyIcon.scale.set(0.23);
+    currencyIcon.alpha = 0.98;
+    currencyLabel.x = currencyX + 34;
+    currencyLabel.y = currencyY + 5;
+    currencyValue.x = currencyX + 34;
+    currencyValue.y = currencyY + 17;
+    const surprisesY = currencyY + currencyH + 8;
+    surprisesBg.clear();
+    surprisesBg.roundRect(0, 0, currencyW, currencyH, 12).fill({ color: 0x13251a, alpha: 0.92 });
+    surprisesBg.roundRect(0, 0, currencyW, currencyH, 12).stroke({ width: 1, color: 0xd8c878, alpha: 0.3 });
+    surprisesBg.x = currencyX;
+    surprisesBg.y = surprisesY;
+    surprisesIcon.clear();
+    surprisesIcon.circle(currencyX + 18, surprisesY + currencyH * 0.5, 9).fill({ color: 0xffe8a8, alpha: 0.98 });
+    surprisesIcon.circle(currencyX + 18, surprisesY + currencyH * 0.5, 9).stroke({ width: 1, color: 0xfff0c8, alpha: 0.45 });
+    surprisesLabel.x = currencyX + 34;
+    surprisesLabel.y = surprisesY + 5;
+    surprisesValue.x = currencyX + 34;
+    surprisesValue.y = surprisesY + 17;
+
+    const s = Math.min(118, Math.max(88, Math.floor(app.screen.height * 0.19)));
+    const miniMapX = app.screen.width - marginR - s;
+    const miniMapY = surprisesY + currencyH + 12;
+    miniMap.x = miniMapX;
+    miniMap.y = miniMapY;
     miniMap.width = s;
     miniMap.height = s;
     miniMapBg.clear();
-    miniMapBg.roundRect(x - 7, y - 7, s + 14, s + 14, 8).fill({ color: 0x11281c, alpha: 0.32 });
-    miniMapBg.roundRect(x - 7, y - 7, s + 14, s + 14, 8).stroke({ width: 1, color: 0xb8f7be, alpha: 0.12 });
+    miniMapBg.roundRect(miniMapX - 6, miniMapY - 6, s + 12, s + 12, 8).fill({ color: 0x11281c, alpha: 0.32 });
+    miniMapBg.roundRect(miniMapX - 6, miniMapY - 6, s + 12, s + 12, 8).stroke({ width: 1, color: 0xb8f7be, alpha: 0.12 });
 
-    const barW = 260;
+    const gap = 10;
+    const totalW = 3 * boosterD + 2 * gap;
+    const startX = (app.screen.width - totalW) * 0.5;
+    const baseBottom = app.screen.height - 30;
+    boosterLure.wrap.x = startX;
+    boosterSurge.wrap.x = startX + boosterD + gap;
+    boosterSight.wrap.x = startX + 2 * (boosterD + gap);
+    const arc = 8;
+    boosterLure.wrap.y = baseBottom - boosterD - 12 + arc * 0.45;
+    boosterSurge.wrap.y = baseBottom - boosterD - 12 - arc;
+    boosterSight.wrap.y = baseBottom - boosterD - 12 + arc * 0.45;
+    layoutMenuUI();
+    toastText.style.wordWrapWidth = Math.min(560, app.screen.width - 36);
+    toastText.x = app.screen.width * 0.5;
+    const boosterTopY = Math.min(boosterLure.wrap.y, boosterSurge.wrap.y, boosterSight.wrap.y);
+    toastText.y = Math.max(72 + h, boosterTopY - 54);
+    if (helpPanelOpen) layoutHelpOverlay();
+
+    const barW = Math.min(280, Math.max(120, app.screen.width - lbW - 132 - 28));
     const barH = 10;
     const bx = app.screen.width * 0.5 - barW * 0.5;
     const by = 14 + h;
@@ -725,13 +1446,6 @@ export async function mountGame(hostEl, options = {}) {
     milestoneText.y = app.screen.height * 0.42;
     screenGlow.clear();
     screenGlow.rect(0, 0, app.screen.width, app.screen.height).fill({ color: 0xd8ffcf, alpha: 1 });
-
-    flowPlayerLabel.x = 16;
-    flowPlayerLabel.y = 10;
-    flowLogout.x = app.screen.width - flowLogout.width - 20;
-    flowLogout.y = 10;
-    flowProfile.x = flowLogout.x - flowProfile.width - 28;
-    flowProfile.y = 10;
   };
   layoutUI();
 
@@ -754,9 +1468,25 @@ export async function mountGame(hostEl, options = {}) {
   app.canvas.addEventListener("pointermove", onCanvasPointerMove);
 
   const onKeyDown = (e) => {
+    if (e.code === "Escape") {
+      if (helpPanelOpen) {
+        helpPanelOpen = false;
+        helpOverlay.visible = false;
+      } else if (menuOpen) {
+        menuOpen = false;
+        menuBackdrop.visible = false;
+        menuDropdown.visible = false;
+      }
+      return;
+    }
     if (e.code === "Space") {
       e.preventDefault();
       boostHeld = true;
+    }
+    if (!gamePaused && !e.repeat) {
+      if (e.code === "KeyZ") fireLure();
+      if (e.code === "KeyX") fireSurge();
+      if (e.code === "KeyC") fireSight();
     }
     if (["KeyW", "KeyA", "KeyS", "KeyD"].includes(e.code)) {
       keys.add(e.code);
@@ -813,7 +1543,7 @@ export async function mountGame(hostEl, options = {}) {
   const spawnRain = () => {
     for (let i = 0; i < 120; i += 1) {
       const d = new PIXI.Graphics();
-      d.moveTo(0, 0).lineTo(0, 10).stroke({ width: 1, color: 0xa7dbff, alpha: 0.5 });
+      d.moveTo(0, 0).lineTo(0, 14).stroke({ width: 2.2, color: 0xa7dbff, alpha: 0.58 });
       d.x = Math.random() * app.screen.width;
       d.y = Math.random() * app.screen.height;
       d._vx = -0.8 - Math.random() * 0.7;
@@ -839,6 +1569,7 @@ export async function mountGame(hostEl, options = {}) {
 
   let lifePaintTick = 0;
   let flowerSpawnStep = 0;
+  let treeSpawnStep = 0;
   let bloomEventTimer = 5000;
   let bloomPulseMs = 0;
   let auraSpawnAccum = 0;
@@ -873,12 +1604,12 @@ export async function mountGame(hostEl, options = {}) {
     const d = img.data;
     for (let i = 0; i < lifeField.length; i += 1) {
       const v = lifeField[i];
-      const deadR = 58;
-      const deadG = 66;
-      const deadB = 60;
-      const aliveR = 96;
-      const aliveG = 185;
-      const aliveB = 104;
+      const deadR = 132;
+      const deadG = 112;
+      const deadB = 90;
+      const aliveR = 170;
+      const aliveG = 224;
+      const aliveB = 148;
       d[i * 4] = (deadR + (aliveR - deadR) * v) | 0;
       d[i * 4 + 1] = (deadG + (aliveG - deadG) * v) | 0;
       d[i * 4 + 2] = (deadB + (aliveB - deadB) * v) | 0;
@@ -901,7 +1632,7 @@ export async function mountGame(hostEl, options = {}) {
     e.anchor.set(0.5);
     e.x = w.x + (Math.random() - 0.5) * 36;
     e.y = w.y + (Math.random() - 0.5) * 36;
-    e.scale.set(0.27 + Math.random() * 0.16);
+    e.scale.set(1.36 + Math.random() * 0.8);
     e.alpha = 0.92;
     e.blendMode = "add";
     e.tint = 0xf0ffb8;
@@ -913,10 +1644,37 @@ export async function mountGame(hostEl, options = {}) {
     particleLayer.addChild(e);
   };
 
+  const spawnBoosterDrop = (type) => {
+    if (boosterDrops.length >= 8) return;
+    const ix = (Math.random() * LIFE_W) | 0;
+    const iy = (Math.random() * LIFE_H) | 0;
+    const w = lifeToWorld(ix, iy);
+    const c = new PIXI.Container();
+    const g = new PIXI.Graphics();
+    const icon = type === "lure" ? "🌸" : type === "surge" ? "⚡" : "◇";
+    const tint = type === "lure" ? 0xff9ed0 : type === "surge" ? 0xffd878 : 0xb8e4ff;
+    g.circle(0, 0, 40).fill({ color: 0x163028, alpha: 0.95 });
+    g.circle(0, 0, 40).stroke({ width: 3, color: 0xe8ffd8, alpha: 0.7 });
+    const t = new PIXI.Text({ text: icon, style: { fontSize: 40 } });
+    t.anchor.set(0.5);
+    c.addChild(g);
+    c.addChild(t);
+    c.x = w.x + (Math.random() - 0.5) * 30;
+    c.y = w.y + (Math.random() - 0.5) * 30;
+    c.alpha = 0.95;
+    c._type = type;
+    c._phase = Math.random() * Math.PI * 2;
+    c._baseY = c.y;
+    c._tint = tint;
+    c.tint = tint;
+    c.scale.set(1.45);
+    boosterDrops.push(c);
+    particleLayer.addChild(c);
+  };
+
   const setWeather = (kind) => {
     weather.kind = kind;
     weather.timer = 60000 + Math.random() * 30000;
-    weatherText.text = `Weather: ${kind[0].toUpperCase()}${kind.slice(1)}`;
     if (kind === "sunny") {
       weatherVisual.targetVeilColor = 0xfff4c7;
       weatherVisual.targetVeilAlpha = 0.04;
@@ -944,11 +1702,14 @@ export async function mountGame(hostEl, options = {}) {
     if (awakeningActive || hasAwakened) return;
     awakeningActive = true;
     awakeningElapsed = 0;
-    awakeningSoundPlayed = false;
-    milestoneMsgMs = 0;
-    screenGlowMs = 0;
-    milestoneText.text = awakeningMessages[(Math.random() * awakeningMessages.length) | 0];
-    spawnBloomEvent(player.x, player.y, 0.88, { awardWorldLife: false, playSound: false, particleMult: 0.92 });
+    awakeningSoundPlayed = true;
+    milestoneText.style.fontSize = 34;
+    milestoneText.text = "GREAT BLOOM\nThe world remembers";
+    milestoneText.alpha = 0;
+    screenGlowMs = 3200;
+    spawnBloomEvent(player.x, player.y, 1.12, { awardWorldLife: false, playSound: false, particleMult: 1.05 });
+    sounds.playEffect("bloom", 1.38);
+    window.setTimeout(() => sounds.playEffect("bloom", 1.05), 220);
   }
 
   const spawnBloomEvent = (x, y, power = 1, opts = {}) => {
@@ -968,7 +1729,7 @@ export async function mountGame(hostEl, options = {}) {
       p.anchor.set(0.5);
       p.x = x;
       p.y = y;
-      const flowerVis = 2.05;
+      const flowerVis = 2.75;
       p.scale.set((0.26 + Math.random() * 0.28) * flowerVis * (particleMult < 0.75 ? 0.88 : 1));
       p.alpha = 0.94;
       p.blendMode = "normal";
@@ -985,7 +1746,7 @@ export async function mountGame(hostEl, options = {}) {
     ring.anchor.set(0.5);
     ring.x = x;
     ring.y = y;
-    ring.scale.set(0.4 * (particleMult < 0.75 ? 0.75 : 1));
+    ring.scale.set(0.55 * (particleMult < 0.75 ? 0.75 : 1));
     ring.alpha = 0.75;
     ring._ring = true;
     ring._age = 0;
@@ -997,7 +1758,7 @@ export async function mountGame(hostEl, options = {}) {
       halo.anchor.set(0.5);
       halo.x = x + (Math.random() - 0.5) * 16;
       halo.y = y + (Math.random() - 0.5) * 16;
-      halo.scale.set((0.34 + Math.random() * 0.28) * (particleMult < 0.75 ? 0.8 : 1));
+      halo.scale.set((0.44 + Math.random() * 0.34) * (particleMult < 0.75 ? 0.8 : 1));
       halo.alpha = 0.5;
       halo._ring = true;
       halo._age = 0;
@@ -1018,32 +1779,81 @@ export async function mountGame(hostEl, options = {}) {
     });
   };
 
-  let milestoneMsgMs = 0;
   let screenGlowMs = 0;
-  const milestoneMessages = ["A pulse beneath the silence", "The old warmth stirs", "What slept begins to listen"];
-  const triggerMilestone = (idx) => {
+  const triggerMilestone = () => {
     spawnBloomEvent(player.x, player.y, 1.8);
     sounds.playEffect("bloom");
     window.setTimeout(() => sounds.playEffect("bloom"), 120);
-    milestoneText.text = milestoneMessages[idx] ?? "The land recalls";
-    milestoneText.alpha = 1;
-    milestoneMsgMs = 2400;
-    screenGlowMs = 680;
+    screenGlowMs = Math.max(screenGlowMs, 520);
   };
   const addWorldLife = (amount) => {
     if (amount <= 0) return;
+    const eff = amount * BASE_WORLD_GAIN_SCALE * helperMultiplier;
     const prev = worldLife;
-    worldLife = clamp(worldLife + amount, 0, 100);
+    worldLife = clamp(worldLife + eff, 0, 100);
     if (worldLife < 95) hasAwakened = false;
     while (nextMilestoneIdx < worldMilestones.length && prev < worldMilestones[nextMilestoneIdx] && worldLife >= worldMilestones[nextMilestoneIdx]) {
-      triggerMilestone(nextMilestoneIdx);
+      triggerMilestone();
       nextMilestoneIdx += 1;
     }
     if (prev < 100 && worldLife >= 100 && !hasAwakened && !awakeningActive) beginAwakening();
   };
 
+  const applyWorldVariation = () => {
+    const variants = [0xe8fff0, 0xf2ffe2, 0xe6f8ff, 0xfff2e2];
+    bg.tint = variants[worldVariation % variants.length];
+  };
+
+  const resetWorldCycle = () => {
+    worldCycle += 1;
+    worldVariation = (worldVariation + 1) % 4;
+    worldLife = 0;
+    nextMilestoneIdx = 0;
+    hasAwakened = false;
+    awakeningActive = false;
+    awakeningBoost = 0;
+    eventSuppress = 0;
+    naturalBloomTimer = 2200 + Math.random() * 1800;
+    lifeField.fill(0.01);
+    trailMemory.fill(0);
+    trail.length = 0;
+    treeSpawnStep = 0;
+    trees.forEach((t) => t.destroy());
+    trees.length = 0;
+    triggerMilestone();
+    updateLifeTexture();
+    applyWorldVariation();
+  };
+
   const sounds = createSoundManager();
   sounds.playAmbient();
+
+  const spawnCritter = (isSpecial) => {
+    const hasRare = worldCritters.some((c) => c._special);
+    if (isSpecial && hasRare) return;
+    const commons = worldCritters.filter((c) => !c._special).length;
+    if (!isSpecial && commons >= 4) return;
+    if (worldCritters.length >= 6) return;
+    const kind = isSpecial ? 4 + ((Math.random() * 2) | 0) : (Math.random() * 4) | 0;
+    const spr = new PIXI.Sprite(critterTextures[kind]);
+    spr.anchor.set(0.5);
+    const spread = 320 + Math.random() * 520;
+    const ang = Math.random() * Math.PI * 2;
+    spr.x = clamp(player.x + Math.cos(ang) * spread, -HALF_WORLD + 50, HALF_WORLD - 50);
+    spr.y = clamp(player.y + Math.sin(ang) * spread, -HALF_WORLD + 50, HALF_WORLD - 50);
+    const baseScale = 0.85 + Math.random() * 0.2;
+    spr.scale.set(isSpecial ? baseScale * SPECIAL_SURPRISE_SCALE_MUL : baseScale);
+    spr._special = kind >= 4;
+    spr._phase = Math.random() * Math.PI * 2;
+    spr._hop = 0;
+    spr._vx = (Math.random() - 0.5) * 0.35;
+    spr._vy = (Math.random() - 0.5) * 0.35;
+    spr.tint = spr._special ? 0xffffff : 0xe8fff0;
+    spr.alpha = 0.94;
+    worldCritters.push(spr);
+    critterLayer.addChild(spr);
+  };
+
   const spawnLifeAura = (x, y, strength = 1) => {
     const progress = worldLife / 100;
     const afterglowAura = hasAwakened ? 0.14 : 0;
@@ -1134,6 +1944,10 @@ export async function mountGame(hostEl, options = {}) {
         hasAwakened = true;
         awakeningBoost = 0;
         eventSuppress = 0;
+        worldResetPendingMs = 1700;
+        milestoneText.text = "";
+        milestoneText.style.fontSize = 28;
+        milestoneText.alpha = 0;
         if (!afterglowMotesAdded) {
           afterglowMotesAdded = true;
           onWorldAwaken?.();
@@ -1157,6 +1971,12 @@ export async function mountGame(hostEl, options = {}) {
     }
 
     const trailGlowMul = 1 + awakeningBoost * 0.52 + (hasAwakened ? 0.12 : 0);
+    if (helperPresenceCount > 1 && !coopHintShown) {
+      coopHintShown = true;
+      hintOverrideMs = 2800;
+      toastText.text = "Co-op resonance active: nearby spirits accelerate awakening.";
+    }
+    if (helperPresenceCount <= 1) coopHintShown = false;
 
     weather.timer -= ticker.deltaMS;
     if (weather.timer <= 0) {
@@ -1167,6 +1987,26 @@ export async function mountGame(hostEl, options = {}) {
     if (bloomEventTimer <= 0) {
       bloomEventTimer = 3800 + Math.random() * 2600;
       if (Math.hypot(velocity.x, velocity.y) > 0.35 && eventSuppress < 0.28) spawnBloomEvent(player.x, player.y, 0.9);
+    }
+    if (helperPresenceCount > 1 && !awakeningActive) {
+      coopResonanceTimerMs -= ticker.deltaMS;
+      if (coopResonanceTimerMs <= 0) {
+        coopResonanceTimerMs = Math.max(2200, 5600 - helperPresenceCount * 550);
+        const rings = Math.min(5, 1 + helperPresenceCount);
+        for (let ri = 0; ri < rings; ri += 1) {
+          const a = (ri / rings) * Math.PI * 2 + Math.random() * 0.2;
+          const r = 24 + ri * 18;
+          spawnBloomEvent(player.x + Math.cos(a) * r, player.y + Math.sin(a) * r, 0.9, {
+            awardWorldLife: false,
+            playSound: false,
+            particleMult: 0.7,
+          });
+        }
+        addWorldLife(2.4 + helperPresenceCount * 0.7);
+        screenGlowMs = Math.max(screenGlowMs, 260);
+      }
+    } else {
+      coopResonanceTimerMs = 6200;
     }
 
     naturalBloomTimer -= ticker.deltaMS;
@@ -1211,9 +2051,10 @@ export async function mountGame(hostEl, options = {}) {
       }
     }
 
-    const accel = boostHeld ? 0.36 : 0.22;
-    const baseSpeed = 4.45; // slightly faster default feel
-    const maxSpeed = baseSpeed * (boostHeld ? 1.42 : 1) + (weather.kind === "wind" ? 0.3 : 0);
+    const surgeMul = surgeBoostMs > 0 ? 1.18 : 1;
+    const accel = (boostHeld ? 0.42 : 0.28) * surgeMul;
+    const baseSpeed = 5.85;
+    const maxSpeed = baseSpeed * (boostHeld ? 1.42 : 1) * surgeMul + (weather.kind === "wind" ? 0.3 : 0);
     const targetVx = inputX * maxSpeed * inputMag;
     const targetVy = inputY * maxSpeed * inputMag;
     velocity.x = lerp(velocity.x, targetVx, accel * dt);
@@ -1244,6 +2085,13 @@ export async function mountGame(hostEl, options = {}) {
     const beatT = clamp(beatTimerMs / beatDurationMs, 0, 1);
     const beat = Math.sin(Math.PI * beatT) ** 2; // smooth organic pulse
     const moveSpeed = Math.hypot(velocity.x, velocity.y);
+    if (!firstMoveReactionShown && moveSpeed > 0.32) {
+      firstMoveReactionShown = true;
+      hintOverrideMs = 3200;
+      toastText.text = "Where you move, life begins";
+      spawnBloomEvent(player.x, player.y, 1.5, { awardWorldLife: false, particleMult: 1.2 });
+      screenGlowMs = Math.max(screenGlowMs, 460);
+    }
     bloomPulseMs = Math.max(0, bloomPulseMs - ticker.deltaMS);
     const bloomPulse = bloomPulseMs > 0 ? Math.sin((1 - bloomPulseMs / 520) * Math.PI) : 0;
     const movePulse = clamp(moveSpeed / 4, 0, 1);
@@ -1261,6 +2109,11 @@ export async function mountGame(hostEl, options = {}) {
     soul.alpha = 0.42 + beat * 0.09 + movePulse * 0.06 + awakeningBoost * 0.06 + (hasAwakened ? 0.05 : 0);
 
     trail.push({ x: player.x, y: player.y, phase: Math.random() * Math.PI * 2 });
+    {
+      const { lx, ly } = worldToLife(player.x, player.y);
+      const memIdx = ly * LIFE_W + lx;
+      trailMemory[memIdx] = clamp(trailMemory[memIdx] + 0.045 * dt, 0, 1);
+    }
     if (trail.length > 160) trail.shift();
     auraSpawnAccum += moveSpeed * dt * (1 + awakeningBoost * 0.32 + (hasAwakened ? 0.1 : 0));
     const auraGate = 2.2 / (1 + awakeningBoost * 0.38 + (hasAwakened ? 0.12 : 0));
@@ -1343,7 +2196,7 @@ export async function mountGame(hostEl, options = {}) {
       f.x = player.x + ox;
       f.y = player.y + oy;
       f.rotation = Math.random() * Math.PI * 2;
-      f.scale.set((0.62 + Math.random() * 0.38) * 1.22);
+      f.scale.set((0.62 + Math.random() * 0.38) * 1.28);
       f.alpha = 0.88;
       f.blendMode = "normal";
       f._age = 0;
@@ -1354,7 +2207,7 @@ export async function mountGame(hostEl, options = {}) {
       glow.anchor.set(0.5);
       glow.x = f.x;
       glow.y = f.y;
-      glow.scale.set(0.28 + Math.random() * 0.18);
+      glow.scale.set(0.38 + Math.random() * 0.26);
       glow.alpha = 0.12 * trailGlowMul;
       glow.tint = 0xc8ffd8;
       glow._age = 0;
@@ -1367,12 +2220,54 @@ export async function mountGame(hostEl, options = {}) {
       const f = flowers[i];
       f._age += ticker.deltaMS;
       f.rotation += 0.0007 * ticker.deltaMS;
-      f.tint = 0xffffff;
+      const { lx, ly } = worldToLife(f.x, f.y);
+      const mem = trailMemory[ly * LIFE_W + lx];
+      if (helperPresenceCount > 1 && mem > 0.5) f.tint = 0xffe8f6;
+      else if (mem > 0.35) f.tint = 0xf2ffe8;
+      else f.tint = 0xffffff;
       if (f._age > 18000) {
         f.alpha -= 0.0035 * dt;
         if (f.alpha <= 0) {
           f.destroy();
           flowers.splice(i, 1);
+        }
+      }
+    }
+    const regrowth = worldLife / 100;
+    treeSpawnStep += Math.hypot(velocity.x, velocity.y) * dt * (0.25 + regrowth * 0.95);
+    const desiredTrees = Math.floor(18 + regrowth * 90);
+    if (regrowth > 0.12 && trees.length < desiredTrees && treeSpawnStep > 68) {
+      treeSpawnStep = 0;
+      const tex = treeTextures[(Math.random() * treeTextures.length) | 0];
+      const tr = new PIXI.Sprite(tex);
+      tr.anchor.set(0.5, 0.92);
+      const dist = 90 + Math.random() * 200;
+      const a = Math.random() * Math.PI * 2;
+      tr.x = clamp(player.x + Math.cos(a) * dist, -HALF_WORLD + 58, HALF_WORLD - 58);
+      tr.y = clamp(player.y + Math.sin(a) * dist, -HALF_WORLD + 58, HALF_WORLD - 58);
+      const lifeAt = sampleLife(tr.x, tr.y);
+      tr.scale.set((0.22 + regrowth * 0.55 + lifeAt * 0.18) * (0.78 + Math.random() * 0.35));
+      tr.alpha = 0;
+      tr._age = 0;
+      tr._fadeMs = 1800 + Math.random() * 1200;
+      tr._maxA = 0.18 + regrowth * 0.72;
+      trees.push(tr);
+      floraLayer.addChildAt(tr, 0);
+    }
+    for (let i = trees.length - 1; i >= 0; i -= 1) {
+      const tr = trees[i];
+      tr._age += ticker.deltaMS;
+      const lifeAt = sampleLife(tr.x, tr.y);
+      const tGrow = Math.min(1, tr._age / tr._fadeMs);
+      tr.alpha = Math.min(tr._maxA, tGrow * (0.2 + lifeAt * 0.9));
+      const sway = Math.sin(ticker.lastTime * 0.00055 + tr.x * 0.002) * 0.03;
+      tr.rotation = sway;
+      tr.tint = lifeAt > 0.45 ? 0xffffff : 0xe8d8bc;
+      if (regrowth < 0.08 && tr._age > 9000) {
+        tr.alpha -= 0.004 * dt;
+        if (tr.alpha <= 0.01) {
+          tr.destroy();
+          trees.splice(i, 1);
         }
       }
     }
@@ -1388,35 +2283,30 @@ export async function mountGame(hostEl, options = {}) {
       }
     }
 
-    const growthBoost = weather.kind === "rain" ? 1.65 : 1;
+    const coopBoost = helperPresenceCount > 1 ? 1 + Math.min(0.35, (helperPresenceCount - 1) * 0.08) : 1;
+    const growthBoost = (weather.kind === "rain" ? 1.65 : 1) * coopBoost;
     addLifeAt(player.x, player.y, 5 + (level >= 4 ? 2 : 0), 0.02 * dt * growthBoost);
     for (let i = 0; i < trail.length; i += 4) {
       const p = trail[i];
-      addLifeAt(p.x, p.y, 2, 0.0038 * dt * growthBoost);
-    }
-
-    for (let i = 0; i < ghosts.length; i += 1) {
-      const g = ghosts[i];
-      g._retarget -= ticker.deltaMS;
-      if (g._retarget <= 0) {
-        g._tx = g.x + (Math.random() * 2 - 1) * 520;
-        g._ty = g.y + (Math.random() * 2 - 1) * 520;
-        g._tx = clamp(g._tx, -HALF_WORLD + 40, HALF_WORLD - 40);
-        g._ty = clamp(g._ty, -HALF_WORLD + 40, HALF_WORLD - 40);
-        g._retarget = 400 + Math.random() * 1400;
-      }
-      const tx = g._tx - g.x;
-      const ty = g._ty - g.y;
-      const dist = Math.hypot(tx, ty) || 1;
-      const step = 1.4 * dt;
-      g.x += (tx / dist) * Math.min(step, dist);
-      g.y += (ty / dist) * Math.min(step, dist);
-      g.scale.set(1.05 + Math.sin(ticker.lastTime * 0.003 + i) * 0.08);
-      addLifeAt(g.x, g.y, 3, 0.0055 * dt);
+      const { lx, ly } = worldToLife(p.x, p.y);
+      const mem = trailMemory[ly * LIFE_W + lx];
+      const rich = 1 + mem * 0.7;
+      addLifeAt(p.x, p.y, 2, 0.0038 * dt * growthBoost * rich);
     }
 
     const vitalityEssence = 0.52 + 0.48 * (worldLife / 100);
-    if (Math.random() < 0.32 * (1 - eventSuppress * 0.55) * vitalityEssence) maybeSpawnEssence();
+    if (Math.random() < 0.4 * (1 - eventSuppress * 0.55) * vitalityEssence) maybeSpawnEssence();
+    boosterDropTimerMs -= ticker.deltaMS;
+    if (boosterDropTimerMs <= 0) {
+      boosterDropTimerMs = 4000 + Math.random() * 5000;
+      const drops = 1 + ((Math.random() * 2) | 0);
+      for (let di = 0; di < drops; di += 1) {
+        const r = Math.random();
+        if (r < 0.34) spawnBoosterDrop("lure");
+        else if (r < 0.67) spawnBoosterDrop("surge");
+        else spawnBoosterDrop("sight");
+      }
+    }
     const energyBoost = weather.kind === "sunny" ? 1.25 : 1;
     for (let i = essences.length - 1; i >= 0; i -= 1) {
       const e = essences[i];
@@ -1429,15 +2319,104 @@ export async function mountGame(hostEl, options = {}) {
       e.scale.set(e._baseScale * (1 + Math.sin(e._phase * 1.4) * 0.14));
       const dx = e.x - player.x;
       const dy = e.y - player.y;
-      if (dx * dx + dy * dy < 22 * 22) {
+      const pickR = lureActiveMs > 0 ? 42 : 28;
+      if (dx * dx + dy * dy < pickR * pickR) {
         e.destroy();
         essences.splice(i, 1);
         energy += 1 * energyBoost;
         addLifeAt(player.x, player.y, 7, 0.14);
         spawnBloomEvent(player.x, player.y, 1.15);
         sounds.playEffect("collect");
-        addWorldLife(1);
+        addWorldLife(1.35);
       }
+    }
+
+    for (let i = boosterDrops.length - 1; i >= 0; i -= 1) {
+      const b = boosterDrops[i];
+      b._phase += 0.02 * dt;
+      b.y = b._baseY + Math.sin(b._phase) * 6;
+      b.scale.set(0.96 + Math.sin(b._phase * 1.2) * 0.08);
+      const dx = b.x - player.x;
+      const dy = b.y - player.y;
+      if (dx * dx + dy * dy < 44 * 44) {
+        if (b._type === "lure") {
+          lureCharges = Math.min(LURE_MAX, lureCharges + 2);
+          hintOverrideMs = 1800;
+          toastText.text = "Picked up Blossom: +2 Lure charges.";
+        } else if (b._type === "surge") {
+          surgeCharges = Math.min(SURGE_MAX, surgeCharges + 2);
+          hintOverrideMs = 1800;
+          toastText.text = "Picked up Spark: +2 Surge charges.";
+        } else {
+          sightCharges = Math.min(SIGHT_MAX, sightCharges + 2);
+          hintOverrideMs = 1800;
+          toastText.text = "Picked up Eye: +2 Sight charges.";
+        }
+        spawnBloomEvent(player.x, player.y, 1.25, { awardWorldLife: false, particleMult: 1.2 });
+        screenGlowMs = Math.max(screenGlowMs, 280);
+        sounds.playEffect("collect", 1.15);
+        b.destroy({ children: true });
+        boosterDrops.splice(i, 1);
+      }
+    }
+
+    for (let i = worldCritters.length - 1; i >= 0; i -= 1) {
+      const cr = worldCritters[i];
+      cr._hop += 0.022 * dt;
+      cr.x += cr._vx * dt;
+      cr.y += cr._vy * dt + Math.sin(cr._hop) * 0.08;
+      if (Math.random() < 0.02 * dt) {
+        cr._vx += (Math.random() - 0.5) * 0.12;
+        cr._vy += (Math.random() - 0.5) * 0.12;
+        cr._vx = clamp(cr._vx, -0.55, 0.55);
+        cr._vy = clamp(cr._vy, -0.55, 0.55);
+      }
+      cr.x = clamp(cr.x, -HALF_WORLD + 40, HALF_WORLD - 40);
+      cr.y = clamp(cr.y, -HALF_WORLD + 40, HALF_WORLD - 40);
+      const pulse = 0.92 + Math.sin(ticker.lastTime * 0.004 + cr._phase) * 0.06;
+      const baseCritterScale = (1.7 + (cr._special ? 0.24 : 0)) * pulse;
+      cr.scale.set(cr._special ? baseCritterScale * SPECIAL_SURPRISE_SCALE_MUL : baseCritterScale);
+      if (cr._special) cr.rotation = Math.sin(ticker.lastTime * 0.0028 + cr._phase) * 0.14;
+      const dx = cr.x - player.x;
+      const dy = cr.y - player.y;
+      const pickR = cr._special ? 56 : 32;
+      if (dx * dx + dy * dy < pickR * pickR) {
+        if (cr._special) {
+          collectedCrittersRare += 1;
+          addWorldLife(4.8);
+          spawnBloomEvent(player.x, player.y, 1.9, { particleMult: 1.45 });
+          hintOverrideMs = Math.max(hintOverrideMs, 1200);
+          toastText.text = "Magical creature found! Awakening surges forward.";
+        } else {
+          collectedCrittersCommon += 1;
+          addWorldLife(0.62);
+          spawnBloomEvent(player.x, player.y, 0.65, { particleMult: 0.7 });
+        }
+        sounds.playEffect(cr._special ? "surprise" : "collect", cr._special ? 1 : 1.05);
+        cr.destroy({ children: true });
+        worldCritters.splice(i, 1);
+      }
+    }
+
+    commonCritterTimerMs -= ticker.deltaMS;
+    if (commonCritterTimerMs <= 0) {
+      spawnCritter(false);
+      commonCritterTimerMs = 12000 + Math.random() * 18000;
+    }
+    specialCritterTimerMs -= ticker.deltaMS;
+    if (specialCritterTimerMs <= 0) {
+      spawnCritter(true);
+      specialCritterTimerMs = 80000 + Math.random() * 110000;
+    }
+
+    surpriseTimerMs -= ticker.deltaMS;
+    if (surpriseTimerMs <= 0 && !awakeningActive) {
+      surpriseTimerMs = 30000 + Math.random() * 28000;
+      const burst = 6 + ((Math.random() * 7) | 0);
+      for (let si = 0; si < burst; si += 1) maybeSpawnEssence();
+      spawnBloomEvent(player.x, player.y, 2.16);
+      sounds.playEffect("bloom", 0.78);
+      if (Math.random() < 0.9) spawnCritter(false);
     }
 
     const vitalityMotes = 0.5 + 0.5 * (worldLife / 100);
@@ -1475,7 +2454,7 @@ export async function mountGame(hostEl, options = {}) {
       b._age += ticker.deltaMS;
       const t = b._age / b._life;
       if (b._ring) {
-        b.scale.set(0.4 + t * 1.8);
+        b.scale.set(0.52 + t * 2.05);
         b.alpha = Math.max(0, 0.75 * (1 - t));
       } else {
         b.x += b._vx * dt;
@@ -1502,7 +2481,7 @@ export async function mountGame(hostEl, options = {}) {
 
     // Very slow optional decay — several minutes to drift from full; allows re-awakening below ~95%.
     // No decay in the last 1% before your first awakening (avoids "stuck at 99%" with tiny gains).
-    let worldDecay = 0.000042 * dt;
+    let worldDecay = 0.00001 * dt;
     if (!hasAwakened && worldLife >= 99) worldDecay = 0;
     worldLife = Math.max(0, worldLife - worldDecay);
     // Guarantee crossing 100% (float / rounding) — next step is the awakening moment.
@@ -1514,41 +2493,6 @@ export async function mountGame(hostEl, options = {}) {
     if (awakeningActive && awakeningElapsed >= 780 && awakeningElapsed < 2800) ambTarget = Math.max(ambTarget, 0.31);
     sounds.setAmbientVolumeTarget(ambTarget);
     sounds.tickAmbientVolume(dt);
-
-    const moveSpdWhisper = Math.hypot(velocity.x, velocity.y);
-    const smooth = (x) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
-    if (whisperPhase === 0) {
-      whisperCooldownMs -= ticker.deltaMS;
-      if (whisperCooldownMs <= 0 && moveSpdWhisper > 0.32 && !awakeningActive && milestoneMsgMs <= 0) {
-        whisperText.text = whisperPool[(Math.random() * whisperPool.length) | 0];
-        whisperPhase = 1;
-        whisperPhaseMs = 0;
-      }
-    } else if (whisperPhase === 1) {
-      whisperPhaseMs += ticker.deltaMS;
-      const k = smooth(Math.min(1, whisperPhaseMs / 1000));
-      whisperText.alpha = k * 0.28;
-      if (whisperPhaseMs >= 1000) {
-        whisperPhase = 2;
-        whisperPhaseMs = 0;
-      }
-    } else if (whisperPhase === 2) {
-      whisperPhaseMs += ticker.deltaMS;
-      whisperText.alpha = 0.28;
-      if (whisperPhaseMs >= 700) {
-        whisperPhase = 3;
-        whisperPhaseMs = 0;
-      }
-    } else if (whisperPhase === 3) {
-      whisperPhaseMs += ticker.deltaMS;
-      const k = smooth(Math.min(1, whisperPhaseMs / 1000));
-      whisperText.alpha = 0.28 * (1 - k);
-      if (whisperPhaseMs >= 1000) {
-        whisperPhase = 0;
-        whisperCooldownMs = 20000 + Math.random() * 20000;
-        whisperText.alpha = 0;
-      }
-    }
 
     weatherVisual.veilAlpha = lerp(weatherVisual.veilAlpha, weatherVisual.targetVeilAlpha, 0.03 * dt);
     weatherVisual.rainAlpha = lerp(weatherVisual.rainAlpha, weatherVisual.targetRainAlpha, 0.06 * dt);
@@ -1571,7 +2515,10 @@ export async function mountGame(hostEl, options = {}) {
     else if (energy >= 70) level = 3;
     else if (energy >= 30) level = 2;
     else level = 1;
-    if (oldLevel !== level) hintText.text = "The land leans toward you";
+    if (oldLevel !== level) {
+      hintOverrideMs = 5200;
+      toastText.text = `Level ${level}! Stronger glow & faster life paint — keep gathering essence.`;
+    }
     if (oldLevel < level) spawnBloomEvent(player.x, player.y, 1.35);
 
     for (let i = 0; i < lifeField.length; i += 1) {
@@ -1586,7 +2533,8 @@ export async function mountGame(hostEl, options = {}) {
     cam.x = lerp(cam.x, player.x, 0.09 * dt);
     cam.y = lerp(cam.y, player.y, 0.09 * dt);
     const speed = Math.hypot(velocity.x, velocity.y);
-    const targetZoom = 0.66 - clamp(speed / 25, 0, 0.06);
+    const sightOff = [0, -0.07, -0.12][sightZoomStep % 3];
+    const targetZoom = 0.66 - clamp(speed / 25, 0, 0.06) + sightOff;
     cam.zoom = lerp(cam.zoom, targetZoom, 0.03 * dt);
     // Keep camera inside world bounds so map edges align with screen edges
     // (no large empty margin past the playable area).
@@ -1603,6 +2551,54 @@ export async function mountGame(hostEl, options = {}) {
     world.scale.set(cam.zoom);
     world.x = cx - cam.x * cam.zoom;
     world.y = cy - cam.y * cam.zoom;
+
+    critterGuide.clear();
+    if (worldCritters.length > 0) {
+      let best = null;
+      let bestD2 = Infinity;
+      for (let i = 0; i < worldCritters.length; i += 1) {
+        const cr = worldCritters[i];
+        const dx = cr.x - player.x;
+        const dy = cr.y - player.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          best = cr;
+        }
+      }
+      if (best) {
+        const sx = cx + (best.x - cam.x) * cam.zoom;
+        const sy = cy + (best.y - cam.y) * cam.zoom;
+        const m = 48;
+        const onScreen = sx > m && sx < app.screen.width - m && sy > m && sy < app.screen.height - m;
+        if (onScreen) {
+          critterGuide.alpha = 0.4;
+          critterGuide
+            .circle(sx, sy, 16 + (best._special ? 6 : 0))
+            .stroke({ width: 2, color: best._special ? 0xffe8a8 : 0xc8ffd8, alpha: 0.85 });
+        } else {
+          critterGuide.alpha = 0.78;
+          const acx = cx;
+          const acy = cy;
+          let edx = sx - acx;
+          let edy = sy - acy;
+          const el = Math.hypot(edx, edy) || 1;
+          edx /= el;
+          edy /= el;
+          const radius = Math.min(app.screen.width, app.screen.height) * 0.42;
+          const ex = clamp(acx + edx * radius, 28, app.screen.width - 28);
+          const ey = clamp(acy + edy * radius, 28, app.screen.height - 28);
+          const ang = Math.atan2(edy, edx);
+          critterGuide.moveTo(ex + Math.cos(ang) * 12, ey + Math.sin(ang) * 12);
+          critterGuide.lineTo(ex + Math.cos(ang + 2.2) * 7, ey + Math.sin(ang + 2.2) * 7);
+          critterGuide.lineTo(ex + Math.cos(ang - 2.2) * 7, ey + Math.sin(ang - 2.2) * 7);
+          critterGuide.lineTo(ex + Math.cos(ang) * 12, ey + Math.sin(ang) * 12);
+          critterGuide.fill({ color: best._special ? 0xffe8a8 : 0xc8ffd8, alpha: 0.92 });
+        }
+      }
+    } else {
+      critterGuide.alpha = 0;
+    }
 
     if (awakeningActive) {
       const e = awakeningElapsed;
@@ -1637,9 +2633,9 @@ export async function mountGame(hostEl, options = {}) {
     if (hasAwakened) {
       bg.tint = 0xe8fff0;
     } else {
-      const r = Math.round(lerp(178, 255, vit));
-      const g = Math.round(lerp(184, 255, vit));
-      const b = Math.round(lerp(176, 255, vit));
+      const r = Math.round(lerp(106, 214, vit));
+      const g = Math.round(lerp(86, 242, vit));
+      const b = Math.round(lerp(70, 176, vit));
       bg.tint = (r << 16) | (g << 8) | b;
     }
     const airMotes = 0.52 + 0.48 * vit;
@@ -1683,29 +2679,105 @@ export async function mountGame(hostEl, options = {}) {
       }
     }
 
-    energyText.text = `Energy: ${Math.floor(energy)}`;
-    levelText.text = `Level: ${level}`;
-    if (!hasAwakened && worldLife >= 98.5 && worldLife < 100 && !awakeningActive) {
-      hintText.text = "Almost whole again";
-    } else if (weather.kind === "sunny") hintText.text = "Warm light feeds your spirit";
-    else if (weather.kind === "rain") hintText.text = "Rain awakens sleeping life";
-    else hintText.text = "Wind carries seeds of change";
+    if (surgeBoostMs > 0) surgeBoostMs -= ticker.deltaMS;
+    if (lureActiveMs > 0) lureActiveMs -= ticker.deltaMS;
+    if (lureActiveMs > 0) {
+      lureFxTimerMs -= ticker.deltaMS;
+      if (lureFxTimerMs <= 0) {
+        lureFxTimerMs = 260;
+        const ring = new PIXI.Sprite(trailGlowTex);
+        ring.anchor.set(0.5);
+        ring.x = player.x;
+        ring.y = player.y;
+        ring.scale.set(0.9);
+        ring.alpha = 0.85;
+        ring._ring = true;
+        ring._age = 0;
+        ring._life = 480;
+        bloomBursts.push(ring);
+        particleLayer.addChild(ring);
+      }
+    }
+    if (surgeBoostMs > 0) {
+      surgeFxTimerMs -= ticker.deltaMS;
+      if (surgeFxTimerMs <= 0) {
+        surgeFxTimerMs = 220;
+        spawnBloomEvent(player.x, player.y, 0.62, { awardWorldLife: false, playSound: false, particleMult: 0.55 });
+      }
+    }
+    if (worldResetPendingMs > 0) {
+      worldResetPendingMs -= ticker.deltaMS;
+      if (worldResetPendingMs <= 0) resetWorldCycle();
+    }
 
-    const barW = 260;
+    const en = Math.floor(energy);
+    currencyValue.text = String(en);
+    surprisesValue.text = String(collectedCrittersRare);
+
+    const self = truncHudName(playerDisplayName);
+    const peerSet = new Set(
+      presencePeers.map((p) => truncHudName(p.name)).filter((n) => n !== self),
+    );
+    const peerNames = [...peerSet].sort((a, b) => a.localeCompare(b));
+    const maxPeerLines = 6;
+    const shown = peerNames.slice(0, maxPeerLines);
+    leaderboardHeader.text = `Spirits in this room (${helperPresenceCount})`;
+    leaderboardSub.text = "";
+    const lines = [];
+    for (let i = 0; i < shown.length; i += 1) {
+      lines.push(`${i + 1}. ${shown[i]} —`);
+    }
+    leaderboardList.text = lines.join("\n");
+    leaderboardSelfRow.text = `${helperPresenceCount}. ${self} ${en}`;
+    const pad = 10;
+    const lbW = Math.min(228, Math.floor(app.screen.width * 0.48));
+    leaderboardSelfRow.x = pad + 12;
+    leaderboardSelfRow.y = leaderboardList.y + leaderboardList.height + 6;
+    leaderboardHi.clear();
+    leaderboardHi.roundRect(pad + 4, leaderboardSelfRow.y - 4, lbW - 8, 20, 5).fill({ color: 0x1a2408, alpha: 0.55 });
+
+    boosterLure.setBadge(String(lureCharges));
+    boosterLure.setEnabled(lureCharges > 0);
+    boosterSurge.setBadge(String(surgeCharges));
+    boosterSurge.setEnabled(surgeCharges > 0);
+    boosterSight.setBadge(String(sightCharges));
+    boosterSight.setEnabled(sightCharges > 0);
+    lurePulseMs = Math.max(0, lurePulseMs - ticker.deltaMS);
+    surgePulseMs = Math.max(0, surgePulseMs - ticker.deltaMS);
+    sightPulseMs = Math.max(0, sightPulseMs - ticker.deltaMS);
+    const lurePulse = lurePulseMs > 0 ? Math.sin((1 - lurePulseMs / 700) * Math.PI) * 0.16 : 0;
+    const surgePulse = surgePulseMs > 0 ? Math.sin((1 - surgePulseMs / 760) * Math.PI) * 0.2 : 0;
+    const sightPulse = sightPulseMs > 0 ? Math.sin((1 - sightPulseMs / 680) * Math.PI) * 0.14 : 0;
+    boosterLure.wrap.scale.set((lureActiveMs > 0 ? 1.06 : 1) + lurePulse);
+    boosterSurge.wrap.scale.set((surgeBoostMs > 0 ? 1.08 : 1) + surgePulse);
+    boosterSight.wrap.scale.set(1 + sightPulse);
+    boosterLure.setTimerProgress(lureActiveMs / LURE_DURATION_MS);
+    boosterSurge.setTimerProgress(surgeBoostMs / SURGE_DURATION_MS);
+    boosterSight.setTimerProgress(0);
+
+    if (helpPanelOpen) layoutHelpOverlay();
+    if (hintOverrideMs > 0) hintOverrideMs -= ticker.deltaMS;
+    if (!hasAwakened && worldLife >= 98.5 && worldLife < 100 && !awakeningActive) {
+      toastText.text = "Almost there — a little more awakening to call the Great Bloom.";
+    } else if (hintOverrideMs > 0) {
+      /* toastText keeps level-up line until timer ends */
+    } else {
+      toastText.text = "";
+    }
+
+    const lbWBar = Math.min(228, Math.floor(app.screen.width * 0.48));
+    const barW = Math.min(280, Math.max(120, app.screen.width - lbWBar - 132 - 28));
     const barH = 10;
     const bx = app.screen.width * 0.5 - barW * 0.5;
     const by = 14 + HUD_SHIFT_Y;
     const wlDisp = worldLife >= 100 ? 100 : Math.round(worldLife * 10) / 10;
-    worldBarLabel.text = `World Restoration ${wlDisp}%`;
+    worldBarLabel.text = `World Awakening ${wlDisp}%`;
     worldBarLabel.x = bx + barW * 0.5 - worldBarLabel.width * 0.5;
     worldBarFill.clear();
     worldBarFill.roundRect(bx, by, barW * worldProgress, barH, 6).fill({ color: 0x8df0a7, alpha: 0.82 });
 
     if (awakeningActive) {
       milestoneText.alpha = awakeningMsgAlpha;
-    } else if (milestoneMsgMs > 0) {
-      milestoneMsgMs -= ticker.deltaMS;
-      milestoneText.alpha = Math.min(1, milestoneMsgMs / 500);
     } else {
       milestoneText.alpha = 0;
     }
@@ -1726,9 +2798,10 @@ export async function mountGame(hostEl, options = {}) {
     });
     const p = toMini(player.x, player.y);
     miniMapDots.circle(p.x, p.y, 3.3).fill({ color: 0xeaffdf, alpha: 1 });
-    for (let i = 0; i < ghosts.length; i += 1) {
-      const gp = toMini(ghosts[i].x, ghosts[i].y);
-      miniMapDots.circle(gp.x, gp.y, 2.2).fill({ color: 0xb9efbf, alpha: 0.9 });
+    for (let i = 0; i < worldCritters.length; i += 1) {
+      const cr = worldCritters[i];
+      const cp = toMini(cr.x, cr.y);
+      miniMapDots.circle(cp.x, cp.y, cr._special ? 2.8 : 2).fill({ color: cr._special ? 0xffe8a8 : 0xa8e8c8, alpha: 0.95 });
     }
   };
   app.ticker.add(onTick);
@@ -1743,6 +2816,7 @@ export async function mountGame(hostEl, options = {}) {
     window.removeEventListener("mousedown", onMouseDown);
     window.removeEventListener("mouseup", onMouseUp);
     flowers.forEach((f) => f.destroy());
+    trees.forEach((t) => t.destroy());
     trailGlows.forEach((g) => g.destroy());
     bloomBursts.forEach((b) => b.destroy());
     awakeningWave.destroy();
@@ -1750,15 +2824,20 @@ export async function mountGame(hostEl, options = {}) {
     lifeAuras.forEach((a) => a.destroy());
     ambientMotes.forEach((m) => m.destroy());
     essences.forEach((e) => e.destroy());
+    boosterDrops.forEach((b) => b.destroy({ children: true }));
+    worldCritters.forEach((c) => c.destroy({ children: true }));
     rainDrops.forEach((r) => r.destroy());
     flowerTextures.forEach((t) => t.destroy(true));
+    treeTextures.forEach((t) => t.destroy(true));
     trailGlowTex.destroy(true);
     bgTex.destroy(true);
     noiseTexNear.destroy(true);
     noiseTexFar.destroy(true);
-    spiritTexture.destroy(true);
-    soulTex.destroy(true);
+    spiritLookTextures.forEach((t) => t.destroy(true));
+    soulLookTextures.forEach((t) => t.destroy(true));
     essenceTex.destroy(true);
+    critterTextures.forEach((t) => t.destroy(true));
+    presenceSub.unsubscribe();
     lifeTex.destroy(true);
     miniMapTex.destroy(true);
     sounds.destroy();
@@ -1773,7 +2852,16 @@ export async function mountGame(hostEl, options = {}) {
       gamePaused = v;
     },
     setPlayerLabel: (s) => {
-      flowPlayerLabel.text = s;
+      playerDisplayName = s;
+      presenceSub.setDisplayName(s);
     },
+    setSpiritLook: (id) => {
+      applySpiritLook(id);
+    },
+    setGameMode: (id, label) => {
+      gameModeId = id;
+      gameModeLabel = label ?? id;
+    },
+    getGameMode: () => ({ id: gameModeId, label: gameModeLabel }),
   };
 }

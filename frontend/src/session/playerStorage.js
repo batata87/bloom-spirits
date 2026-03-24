@@ -2,7 +2,7 @@
 const PLAYER_KEY = "bloom_spirits_player";
 const STATS_KEY = "bloom_spirits_stats";
 
-/** @returns {{ name: string, isGuest: boolean } | null} */
+/** @returns {{ name: string, isGuest: boolean, spiritLook?: number } | null} */
 export function loadPlayer() {
   try {
     const raw = localStorage.getItem(PLAYER_KEY);
@@ -12,7 +12,7 @@ export function loadPlayer() {
   }
 }
 
-/** @param {{ name: string, isGuest: boolean }} player */
+/** @param {{ name: string, isGuest: boolean, spiritLook?: number }} player */
 export function savePlayer(player) {
   localStorage.setItem(PLAYER_KEY, JSON.stringify(player));
 }
