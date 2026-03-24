@@ -2,12 +2,7 @@ import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
 const STORAGE_KEY = "bloom_restoration_session";
 
-/**
- * Parallel Realtime “rooms” (shards). Each client joins one shard derived from their
- * session key so load spreads across many small channels (better sync performance than
- * one global channel). This is not a hard player cap — it’s a scaling partition.
- */
-export const PRESENCE_SHARD_COUNT = 48;
+export type RoomMode = "public" | "private";
 
 export type RestorationPresencePeer = { name: string };
 
@@ -32,17 +27,28 @@ function sessionKey(): string {
   }
 }
 
-function shardIndexForSession(key: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < key.length; i += 1) {
-    h ^= key.charCodeAt(i);
-    h = Math.imul(h, 16777619);
+function roomConfig(): { mode: RoomMode; key: string } {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const modeRaw = params.get("mode")?.trim().toLowerCase();
+    const mode: RoomMode = modeRaw === "private" ? "private" : "public";
+    const room = params.get("room")?.trim();
+    if (mode === "private" && room) {
+      return { mode, key: `private:${room.toLowerCase()}` };
+    }
+    if (room) {
+      // Backward compatibility: `?room=...` without mode acts as private room.
+      return { mode: "private", key: `private:${room.toLowerCase()}` };
+    }
+  } catch {
+    // Ignore URL parsing issues and fallback to public room.
   }
-  return Math.abs(h >>> 0) % PRESENCE_SHARD_COUNT;
+  return { mode: "public", key: "public:global" };
 }
 
-function channelName(shard: number): string {
-  return `bloom-presence-s${shard}`;
+function channelName(roomKey: string): string {
+  const safe = roomKey.replace(/[^a-z0-9:_-]/gi, "-").slice(0, 80);
+  return `bloom-presence-${safe}`;
 }
 
 /** More spirits in the same shard → higher multiplier (diminishing returns). */
@@ -69,7 +75,7 @@ function extractPeers(presenceState: Record<string, unknown>): RestorationPresen
 }
 
 /**
- * Subscribes to a sharded presence channel, tracks display name, and reports peers in the same shard.
+ * Subscribes to a room channel, tracks display name, and reports peers in the same room.
  * When Supabase is off, behaves as solo play with a fake peer list.
  */
 export function subscribeRestorationPresence(
@@ -102,8 +108,8 @@ export function subscribeRestorationPresence(
 
   const supabase = getSupabase();
   const sk = sessionKey();
-  const shard = shardIndexForSession(sk);
-  const topic = channelName(shard);
+  const cfg = roomConfig();
+  const topic = channelName(cfg.key);
 
   const sync = () => {
     if (!ch) return;
@@ -115,7 +121,7 @@ export function subscribeRestorationPresence(
       count: n,
       multiplier: helpersToMultiplier(n),
       peers,
-      shardIndex: shard,
+      shardIndex: 0,
     });
   };
 

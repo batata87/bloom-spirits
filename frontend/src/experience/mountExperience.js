@@ -337,12 +337,24 @@ export async function mountExperience(hostEl) {
 
   let active = "welcome";
 
-  let selectedSpiritLook = normalizeSpiritLook(loadPlayer()?.spiritLook);
+  const makeGuestName = () => `Guest-${1000 + Math.floor(Math.random() * 9000)}`;
+  const isGenericGuestName = (name) => /^(guest|guest[-_ ]?\d*)$/i.test((name || "").trim());
+  const ensureGuestIdentity = () => {
+    const current = loadPlayer();
+    if (current?.name && !isGenericGuestName(current.name)) return current;
+    const spiritLook = normalizeSpiritLook(current?.spiritLook ?? 0);
+    const generated = { name: makeGuestName(), isGuest: true, spiritLook };
+    saveGuestPlayer(generated);
+    return generated;
+  };
+  const initialGuest = ensureGuestIdentity();
+
+  let selectedSpiritLook = normalizeSpiritLook(initialGuest?.spiritLook);
 
   const gameApi = await mountGame(hostEl, {
     app,
     gameParent: gameRoot,
-    flowPlayerName: loadPlayer()?.name ?? "Guest",
+    flowPlayerName: initialGuest?.name ?? "Guest",
     spiritLookId: selectedSpiritLook,
     onFlowProfile: () => {
       playSoftClick();
@@ -393,11 +405,12 @@ export async function mountExperience(hostEl) {
     hideModeSelectInstant();
     setGuestMode();
     clearGuestSession();
-    selectedSpiritLook = 0;
+    const guest = ensureGuestIdentity();
+    selectedSpiritLook = normalizeSpiritLook(guest?.spiritLook ?? 0);
     gameApi.setSpiritLook(0);
     refreshWelcomeProfile();
     refreshWardrobeSelection();
-    gameApi.setPlayerLabel("Guest");
+    gameApi.setPlayerLabel(guest?.name ?? "Guest");
     gameApi.setPaused(true);
     gameRoot.alpha = 0;
     gameRoot.visible = false;
@@ -1010,8 +1023,9 @@ export async function mountExperience(hostEl) {
       window.localStorage?.setItem("bloom_welcome_hint_seen", "1");
     } catch {}
     setGuestMode();
-    saveGuestPlayer({ name: "Guest", isGuest: true, spiritLook: selectedSpiritLook });
-    gameApi.setPlayerLabel("Guest");
+    const guest = ensureGuestIdentity();
+    saveGuestPlayer({ name: guest.name, isGuest: true, spiritLook: selectedSpiritLook });
+    gameApi.setPlayerLabel(guest.name);
     gameApi.setSpiritLook(selectedSpiritLook);
     openModeSelect();
   });

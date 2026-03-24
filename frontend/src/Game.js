@@ -781,6 +781,7 @@ export async function mountGame(hostEl, options = {}) {
   let surpriseTimerMs = 36000 + Math.random() * 24000;
   let collectedCrittersCommon = 0;
   let collectedCrittersRare = 0;
+  const COMMON_CRITTER_SCALE_MUL = 2;
   const SPECIAL_SURPRISE_SCALE_MUL = 3;
   const ambientMotes = [];
   const playerMotes = [];
@@ -2375,7 +2376,7 @@ export async function mountGame(hostEl, options = {}) {
       cr.y = clamp(cr.y, -HALF_WORLD + 40, HALF_WORLD - 40);
       const pulse = 0.92 + Math.sin(ticker.lastTime * 0.004 + cr._phase) * 0.06;
       const baseCritterScale = (1.7 + (cr._special ? 0.24 : 0)) * pulse;
-      cr.scale.set(cr._special ? baseCritterScale * SPECIAL_SURPRISE_SCALE_MUL : baseCritterScale);
+      cr.scale.set(cr._special ? baseCritterScale * SPECIAL_SURPRISE_SCALE_MUL : baseCritterScale * COMMON_CRITTER_SCALE_MUL);
       if (cr._special) cr.rotation = Math.sin(ticker.lastTime * 0.0028 + cr._phase) * 0.14;
       const dx = cr.x - player.x;
       const dy = cr.y - player.y;
