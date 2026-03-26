@@ -1,4 +1,5 @@
 import * as PIXI from "pixi.js";
+import { GlowFilter } from "@pixi/filter-glow";
 import { subscribeRestorationPresence, helpersToMultiplier } from "./lib/restorationPresence.ts";
 import {
   SPIRIT_LOOK_COUNT,
@@ -26,6 +27,46 @@ function clamp(v, min, max) {
 
 function lerp(a, b, t) {
   return a + (b - a) * t;
+}
+
+const PROGRESSION_KEY = "bloom_progression_v1";
+
+function loadProgression() {
+  try {
+    const raw = localStorage.getItem(PROGRESSION_KEY);
+    const p = raw ? JSON.parse(raw) : {};
+    return {
+      spiritStrength: Math.max(0, Number(p.spiritStrength) || 0),
+      totalAwakenings: Math.max(0, Number(p.totalAwakenings) || 0),
+      lastSeenAt: Number(p.lastSeenAt) || 0,
+      lastDailyBonusDay: typeof p.lastDailyBonusDay === "string" ? p.lastDailyBonusDay : "",
+      worldMemoryTrail: Array.isArray(p.worldMemoryTrail) ? p.worldMemoryTrail : [],
+    };
+  } catch {
+    return {
+      spiritStrength: 0,
+      totalAwakenings: 0,
+      lastSeenAt: 0,
+      lastDailyBonusDay: "",
+      worldMemoryTrail: [],
+    };
+  }
+}
+
+function saveProgression(p) {
+  try {
+    localStorage.setItem(PROGRESSION_KEY, JSON.stringify(p));
+  } catch {
+    // Ignore storage errors and keep gameplay uninterrupted.
+  }
+}
+
+function dayKey(ts) {
+  const d = new Date(ts);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
 }
 
 export function createBackgroundTexture(width, height) {
@@ -319,7 +360,7 @@ function makeSoftGlowTexture() {
   return PIXI.Texture.from(c);
 }
 
-/** Tiny world creatures — kinds 0–3 common, 4–5 rare (more glow). */
+/** Tiny world creatures — all kinds are collectible magical creatures. */
 function makeCritterTexture(kind) {
   const c = document.createElement("canvas");
   c.width = 56;
@@ -328,38 +369,45 @@ function makeCritterTexture(kind) {
   const cx = 28;
   const cy = 30;
 
-  const drawGlow = () => {
-    const g = ctx.createRadialGradient(cx, cy, 2, cx, cy, 22);
-    g.addColorStop(0, "rgba(255,255,235,0.45)");
-    g.addColorStop(1, "rgba(255,255,200,0)");
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.arc(cx, cy, 22, 0, Math.PI * 2);
-    ctx.fill();
-  };
-
   switch (kind) {
     case 0: {
-      ctx.fillStyle = "rgba(195,165,130,0.95)";
+      // Tiny fox-like creature, angular style (no inner circles).
+      const bodyG = ctx.createLinearGradient(cx - 14, cy - 8, cx + 14, cy + 10);
+      bodyG.addColorStop(0, "rgba(235,194,142,0.98)");
+      bodyG.addColorStop(1, "rgba(210,152,95,0.98)");
+      ctx.fillStyle = bodyG;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 4, 14, 14, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx - 12, cy + 6);
+      ctx.lineTo(cx - 6, cy - 6);
+      ctx.lineTo(cx + 6, cy - 6);
+      ctx.lineTo(cx + 12, cy + 6);
+      ctx.lineTo(cx + 2, cy + 12);
+      ctx.lineTo(cx - 2, cy + 12);
       ctx.fill();
-      ctx.fillStyle = "rgba(225,200,175,0.95)";
+      ctx.fillStyle = "rgba(248,225,190,0.95)";
       ctx.beginPath();
-      ctx.ellipse(cx - 6, cy - 10, 5, 12, -0.3, 0, Math.PI * 2);
-      ctx.ellipse(cx + 6, cy - 10, 5, 12, 0.3, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "rgba(40,35,30,0.85)";
-      ctx.beginPath();
-      ctx.arc(cx - 5, cy + 2, 2, 0, Math.PI * 2);
-      ctx.arc(cx + 5, cy + 2, 2, 0, Math.PI * 2);
+      ctx.moveTo(cx - 8, cy - 6);
+      ctx.lineTo(cx - 14, cy - 18);
+      ctx.lineTo(cx - 4, cy - 10);
+      ctx.moveTo(cx + 8, cy - 6);
+      ctx.lineTo(cx + 14, cy - 18);
+      ctx.lineTo(cx + 4, cy - 10);
       ctx.fill();
       break;
     }
     case 1: {
-      ctx.fillStyle = "rgba(120,175,255,0.95)";
+      // Bird-like creature, no circular core.
+      const bodyG = ctx.createLinearGradient(cx - 14, cy - 8, cx + 14, cy + 10);
+      bodyG.addColorStop(0, "rgba(166,212,255,0.98)");
+      bodyG.addColorStop(1, "rgba(120,168,240,0.98)");
+      ctx.fillStyle = bodyG;
       ctx.beginPath();
-      ctx.ellipse(cx, cy, 16, 11, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx - 14, cy + 2);
+      ctx.lineTo(cx - 4, cy - 8);
+      ctx.lineTo(cx + 10, cy - 6);
+      ctx.lineTo(cx + 14, cy + 2);
+      ctx.lineTo(cx + 2, cy + 10);
+      ctx.lineTo(cx - 8, cy + 8);
       ctx.fill();
       ctx.fillStyle = "rgba(255,210,120,0.95)";
       ctx.beginPath();
@@ -367,58 +415,77 @@ function makeCritterTexture(kind) {
       ctx.lineTo(cx + 24, cy + 2);
       ctx.lineTo(cx + 14, cy + 6);
       ctx.fill();
-      ctx.fillStyle = "rgba(50,50,50,0.85)";
-      ctx.beginPath();
-      ctx.arc(cx - 6, cy - 2, 2.2, 0, Math.PI * 2);
-      ctx.fill();
       break;
     }
     case 2: {
-      ctx.fillStyle = "rgba(235,145,85,0.95)";
+      // Magical ember moth (no inner circular details).
+      const wingG = ctx.createLinearGradient(cx - 18, cy - 14, cx + 18, cy + 10);
+      wingG.addColorStop(0, "rgba(255,196,120,0.98)");
+      wingG.addColorStop(1, "rgba(255,150,92,0.98)");
+      ctx.fillStyle = wingG;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 2, 13, 12, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx - 2, cy - 4);
+      ctx.lineTo(cx - 18, cy + 2);
+      ctx.lineTo(cx - 9, cy + 14);
+      ctx.lineTo(cx - 1, cy + 6);
       ctx.fill();
       ctx.beginPath();
-      ctx.moveTo(cx - 10, cy - 8);
-      ctx.lineTo(cx - 4, cy - 18);
-      ctx.lineTo(cx - 2, cy - 6);
+      ctx.moveTo(cx + 2, cy - 4);
+      ctx.lineTo(cx + 18, cy + 2);
+      ctx.lineTo(cx + 9, cy + 14);
+      ctx.lineTo(cx + 1, cy + 6);
       ctx.fill();
+      ctx.fillStyle = "rgba(130,62,36,0.98)";
       ctx.beginPath();
-      ctx.moveTo(cx + 10, cy - 8);
-      ctx.lineTo(cx + 4, cy - 18);
-      ctx.lineTo(cx + 2, cy - 6);
+      ctx.moveTo(cx, cy - 10);
+      ctx.lineTo(cx - 3, cy + 8);
+      ctx.lineTo(cx + 3, cy + 8);
       ctx.fill();
-      ctx.fillStyle = "rgba(40,35,30,0.85)";
+      ctx.strokeStyle = "rgba(255,238,210,0.95)";
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.arc(cx - 4, cy + 2, 2, 0, Math.PI * 2);
-      ctx.fill();
+      ctx.moveTo(cx, cy - 10);
+      ctx.quadraticCurveTo(cx - 8, cy - 17, cx - 13, cy - 16);
+      ctx.moveTo(cx, cy - 10);
+      ctx.quadraticCurveTo(cx + 8, cy - 17, cx + 13, cy - 16);
+      ctx.stroke();
       break;
     }
     case 3: {
-      ctx.fillStyle = "rgba(195,185,175,0.95)";
+      // Artistic butterfly (replaces the old gray bug-like creature).
+      const wingG = ctx.createLinearGradient(cx - 20, cy - 14, cx + 20, cy + 14);
+      wingG.addColorStop(0, "rgba(174,226,255,0.98)");
+      wingG.addColorStop(0.5, "rgba(196,188,255,0.98)");
+      wingG.addColorStop(1, "rgba(255,192,236,0.98)");
+      ctx.fillStyle = wingG;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 4, 11, 10, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx - 1, cy - 2);
+      ctx.quadraticCurveTo(cx - 20, cy - 18, cx - 21, cy + 3);
+      ctx.quadraticCurveTo(cx - 15, cy + 16, cx - 2, cy + 7);
       ctx.fill();
-      ctx.strokeStyle = "rgba(210,200,200,0.9)";
-      ctx.lineWidth = 1.5;
       ctx.beginPath();
-      ctx.moveTo(cx + 8, cy + 2);
-      ctx.bezierCurveTo(cx + 18, cy - 2, cx + 22, cy, cx + 18, cy + 4);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(cx - 8, cy + 2);
-      ctx.bezierCurveTo(cx - 18, cy - 2, cx - 22, cy, cx - 18, cy + 4);
-      ctx.stroke();
-      ctx.fillStyle = "rgba(50,45,40,0.8)";
-      ctx.beginPath();
-      ctx.arc(cx - 3, cy + 2, 1.5, 0, Math.PI * 2);
-      ctx.arc(cx + 3, cy + 2, 1.5, 0, Math.PI * 2);
+      ctx.moveTo(cx + 1, cy - 2);
+      ctx.quadraticCurveTo(cx + 20, cy - 18, cx + 21, cy + 3);
+      ctx.quadraticCurveTo(cx + 15, cy + 16, cx + 2, cy + 7);
       ctx.fill();
+      ctx.fillStyle = "rgba(96,72,145,0.98)";
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 11);
+      ctx.lineTo(cx - 3, cy + 9);
+      ctx.lineTo(cx + 3, cy + 9);
+      ctx.fill();
+      ctx.strokeStyle = "rgba(240,244,255,0.92)";
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - 10);
+      ctx.quadraticCurveTo(cx - 8, cy - 17, cx - 13, cy - 16);
+      ctx.moveTo(cx, cy - 10);
+      ctx.quadraticCurveTo(cx + 8, cy - 17, cx + 13, cy - 16);
+      ctx.stroke();
       break;
     }
     case 4: {
       // Large magical moth spirit.
-      drawGlow();
       const wingG = ctx.createLinearGradient(cx - 20, cy - 16, cx + 20, cy + 16);
       wingG.addColorStop(0, "rgba(255,170,240,0.98)");
       wingG.addColorStop(0.5, "rgba(190,150,255,0.98)");
@@ -430,7 +497,9 @@ function makeCritterTexture(kind) {
       ctx.fill();
       ctx.fillStyle = "rgba(95,60,150,0.98)";
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 4, 6, 15, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx, cy - 12);
+      ctx.lineTo(cx - 4, cy + 10);
+      ctx.lineTo(cx + 4, cy + 10);
       ctx.fill();
       ctx.strokeStyle = "rgba(255,245,255,0.92)";
       ctx.lineWidth = 1.6;
@@ -444,14 +513,18 @@ function makeCritterTexture(kind) {
     }
     default: {
       // Large magical fox-like spirit.
-      drawGlow();
       const bodyG = ctx.createLinearGradient(cx - 18, cy - 10, cx + 18, cy + 16);
       bodyG.addColorStop(0, "rgba(255,240,140,0.98)");
       bodyG.addColorStop(0.55, "rgba(255,198,95,0.98)");
       bodyG.addColorStop(1, "rgba(255,145,80,0.98)");
       ctx.fillStyle = bodyG;
       ctx.beginPath();
-      ctx.ellipse(cx, cy + 2, 16, 14, 0, 0, Math.PI * 2);
+      ctx.moveTo(cx - 15, cy + 6);
+      ctx.lineTo(cx - 8, cy - 8);
+      ctx.lineTo(cx + 8, cy - 8);
+      ctx.lineTo(cx + 15, cy + 6);
+      ctx.lineTo(cx + 2, cy + 14);
+      ctx.lineTo(cx - 2, cy + 14);
       ctx.fill();
       ctx.beginPath();
       ctx.moveTo(cx - 9, cy - 5);
@@ -469,11 +542,6 @@ function makeCritterTexture(kind) {
       ctx.moveTo(cx + 12, cy + 5);
       ctx.quadraticCurveTo(cx + 22, cy + 2, cx + 24, cy + 11);
       ctx.stroke();
-      ctx.fillStyle = "rgba(55,35,20,0.9)";
-      ctx.beginPath();
-      ctx.arc(cx - 5, cy + 1, 1.9, 0, Math.PI * 2);
-      ctx.arc(cx + 5, cy + 1, 1.9, 0, Math.PI * 2);
-      ctx.fill();
       break;
     }
   }
@@ -776,7 +844,8 @@ export async function mountGame(hostEl, options = {}) {
   const critterTextures = [0, 1, 2, 3, 4, 5].map((k) => makeCritterTexture(k));
   const worldCritters = [];
   let commonCritterTimerMs = 11000 + Math.random() * 14000;
-  let specialCritterTimerMs = 72000 + Math.random() * 90000;
+  // Specials are the large "magical creatures" (kind 4+). Keep them common.
+  let specialCritterTimerMs = 22000 + Math.random() * 42000;
   /** Periodic “surprise” — extra essence + bloom so the world feels less static. */
   let surpriseTimerMs = 36000 + Math.random() * 24000;
   let collectedCrittersCommon = 0;
@@ -855,6 +924,18 @@ export async function mountGame(hostEl, options = {}) {
   let worldVariation = 0;
   let worldResetPendingMs = 0;
   let firstMoveReactionShown = false;
+  const progression = loadProgression();
+  let spiritStrength = Math.min(12, progression.spiritStrength);
+  let totalAwakenings = progression.totalAwakenings;
+  let worldStage = Math.min(4, Math.floor(totalAwakenings / 2));
+  let stageBoostSaturation = 0;
+  let microBloomTimerMs = 900;
+  let trailIntersectFxTimerMs = 0;
+  let sessionPlayedMs = 0;
+  let dailyBonusPending = progression.lastDailyBonusDay !== dayKey(Date.now());
+  const offlineElapsedMs = progression.lastSeenAt > 0 ? Math.max(0, Date.now() - progression.lastSeenAt) : 0;
+  let offlineGrowthPending = Math.min(16, (offlineElapsedMs / (1000 * 60 * 60)) * 0.7);
+  let returnHintPending = dailyBonusPending || offlineGrowthPending > 0.5;
   /** Energy thresholds for levels 2–4 (shown in HUD). */
   const LEVEL_ENERGY_THRESHOLDS = [30, 70, 120];
 
@@ -1168,11 +1249,8 @@ export async function mountGame(hostEl, options = {}) {
   const bottomHud = new PIXI.Container();
   const drawBoosterBg = (g, hover, enabled) => {
     g.clear();
-    const a = enabled ? 0.94 : 0.32;
-    const stroke = enabled ? 0xe8c878 : 0x5a7068;
-    const fill = hover && enabled ? 0x1a4080 : 0x142a5a;
-    g.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.5 - 1).fill({ color: fill, alpha: a });
-    g.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.5 - 1).stroke({ width: 2, color: stroke, alpha: enabled ? 0.55 : 0.2 });
+    const a = enabled ? (hover ? 0.2 : 0.12) : 0.05;
+    g.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.48).fill({ color: 0xffffff, alpha: a });
   };
   /**
    * @param {string} iconChar
@@ -1183,11 +1261,22 @@ export async function mountGame(hostEl, options = {}) {
    */
   const makeBoosterSlot = (iconChar, startBadge, onTap, hotkey, label) => {
     const wrap = new PIXI.Container();
+    const halo = new PIXI.Graphics();
     const bg = new PIXI.Graphics();
     const ic = new PIXI.Text({ text: iconChar, style: { fontSize: 25 } });
     ic.anchor.set(0.5);
     ic.x = boosterD * 0.5;
     ic.y = boosterD * 0.5;
+    halo.circle(boosterD * 0.5, boosterD * 0.5, boosterD * 0.72).fill({ color: 0xbce8ff, alpha: 0.22 });
+    halo.filters = [
+      new GlowFilter({
+        color: 0xe8f7ff,
+        distance: 24,
+        outerStrength: 1.8,
+        innerStrength: 0.35,
+        quality: 0.18,
+      }),
+    ];
     const badge = new PIXI.Graphics();
     const bt = new PIXI.Text({
       text: startBadge,
@@ -1198,15 +1287,25 @@ export async function mountGame(hostEl, options = {}) {
     bt.y = boosterD - 8;
     badge.circle(boosterD - 8, boosterD - 8, 10).fill({ color: 0xfafefe, alpha: 0.95 });
     const hkBg = new PIXI.Graphics();
-    hkBg.circle(boosterD * 0.5, boosterD + 10, 11).fill({ color: 0x1a3028, alpha: 0.92 });
-    hkBg.circle(boosterD * 0.5, boosterD + 10, 11).stroke({ width: 1, color: 0xb8f7be, alpha: 0.25 });
+    const hkX = Math.round(boosterD * 0.5 + 18);
+    const hkY = Math.round(boosterD * 0.5 + 18);
+    hkBg.roundRect(hkX - 10, hkY - 8, 20, 16, 6).fill({ color: 0x102318, alpha: 0.92 });
+    hkBg.roundRect(hkX - 10, hkY - 8, 20, 16, 6).stroke({ width: 1, color: 0xe8fff0, alpha: 0.62 });
     const hk = new PIXI.Text({
       text: hotkey,
-      style: { fontFamily: "Montserrat", fontSize: 11, fontWeight: "700", fill: 0xd8f0e4 },
+      style: {
+        fontFamily: "Montserrat",
+        fontSize: 12,
+        fontWeight: "800",
+        fill: 0xffffff,
+        stroke: { color: 0x0a1410, width: 2, join: "round" },
+      },
     });
     hk.anchor.set(0.5);
-    hk.x = boosterD * 0.5;
-    hk.y = boosterD + 10;
+    hk.resolution = 2;
+    hk.alpha = 0.98;
+    hk.x = hkX;
+    hk.y = hkY;
     const lb = new PIXI.Text({
       text: label,
       style: { fontFamily: "Montserrat", fontSize: 10, fontWeight: "600", fill: 0xb8dccc },
@@ -1216,6 +1315,7 @@ export async function mountGame(hostEl, options = {}) {
     lb.y = boosterD + 24;
     const timerBack = new PIXI.Graphics();
     const timerFill = new PIXI.Graphics();
+    wrap.addChild(halo);
     wrap.addChild(bg);
     wrap.addChild(ic);
     wrap.addChild(badge);
@@ -1229,6 +1329,8 @@ export async function mountGame(hostEl, options = {}) {
     wrap.cursor = "pointer";
     wrap.hitArea = new PIXI.Rectangle(0, 0, boosterD, boosterD + 34);
     let enabled = true;
+    let active = false;
+    const phase = Math.random() * Math.PI * 2;
     const paint = (hover) => drawBoosterBg(bg, hover, enabled);
     paint(false);
     wrap.on("pointerover", () => paint(true));
@@ -1259,7 +1361,16 @@ export async function mountGame(hostEl, options = {}) {
         enabled = v;
         wrap.eventMode = v ? "static" : "passive";
         wrap.cursor = v ? "pointer" : "default";
+        ic.alpha = v ? 1 : 0.6;
         paint(false);
+      },
+      setActive: (v) => {
+        active = v;
+      },
+      updateHalo: (timeMs) => {
+        const breathe = 0.5 + Math.sin(timeMs * 0.0022 + phase) * 0.5;
+        const target = !enabled ? 0.03 : active ? 0.28 + breathe * 0.22 : 0.06 + breathe * 0.05;
+        halo.alpha += (target - halo.alpha) * 0.18;
       },
       setTimerProgress: (progress) => drawTimer(progress),
     };
@@ -1544,11 +1655,13 @@ export async function mountGame(hostEl, options = {}) {
   const spawnRain = () => {
     for (let i = 0; i < 120; i += 1) {
       const d = new PIXI.Graphics();
-      d.moveTo(0, 0).lineTo(0, 14).stroke({ width: 2.2, color: 0xa7dbff, alpha: 0.58 });
+      const len = 10 + Math.random() * 18;
+      d.moveTo(0, 0).lineTo(0, len).stroke({ width: 2.2, color: 0xa7dbff, alpha: 0.58 });
       d.x = Math.random() * app.screen.width;
       d.y = Math.random() * app.screen.height;
-      d._vx = -0.8 - Math.random() * 0.7;
-      d._vy = 2.2 + Math.random() * 1.4;
+      // Keep rain mostly vertical; only a tiny horizontal drift.
+      d._vx = (Math.random() - 0.5) * 0.12;
+      d._vy = 3.2 + Math.random() * 1.8;
       weatherLayer.addChild(d);
       rainDrops.push(d);
     }
@@ -1603,17 +1716,23 @@ export async function mountGame(hostEl, options = {}) {
   const updateLifeTexture = () => {
     const { img, ctx, canvas } = lifeCanvas;
     const d = img.data;
+    const stagePalettes = [
+      { dead: [132, 112, 90], alive: [170, 224, 148] }, // soft meadow
+      { dead: [122, 106, 82], alive: [156, 214, 126] }, // richer vegetation
+      { dead: [112, 98, 74], alive: [126, 194, 108] }, // forest density
+      { dead: [100, 104, 98], alive: [118, 194, 186] }, // water-light feel
+      { dead: [88, 84, 96], alive: [142, 118, 202] }, // night bloom
+    ];
+    const pal = stagePalettes[worldStage] || stagePalettes[0];
+    const sat = 1 + stageBoostSaturation * 0.16 + (worldLife / 100) * 0.18;
     for (let i = 0; i < lifeField.length; i += 1) {
       const v = lifeField[i];
-      const deadR = 132;
-      const deadG = 112;
-      const deadB = 90;
-      const aliveR = 170;
-      const aliveG = 224;
-      const aliveB = 148;
-      d[i * 4] = (deadR + (aliveR - deadR) * v) | 0;
-      d[i * 4 + 1] = (deadG + (aliveG - deadG) * v) | 0;
-      d[i * 4 + 2] = (deadB + (aliveB - deadB) * v) | 0;
+      const rr = (pal.dead[0] + (pal.alive[0] - pal.dead[0]) * v) * sat;
+      const gg = (pal.dead[1] + (pal.alive[1] - pal.dead[1]) * v) * sat;
+      const bb = (pal.dead[2] + (pal.alive[2] - pal.dead[2]) * v) * sat;
+      d[i * 4] = clamp(rr, 0, 255) | 0;
+      d[i * 4 + 1] = clamp(gg, 0, 255) | 0;
+      d[i * 4 + 2] = clamp(bb, 0, 255) | 0;
       d[i * 4 + 3] = 150;
     }
     ctx.putImageData(img, 0, 0);
@@ -1651,13 +1770,25 @@ export async function mountGame(hostEl, options = {}) {
     const iy = (Math.random() * LIFE_H) | 0;
     const w = lifeToWorld(ix, iy);
     const c = new PIXI.Container();
+    const halo = new PIXI.Graphics();
     const g = new PIXI.Graphics();
     const icon = type === "lure" ? "🌸" : type === "surge" ? "⚡" : "◇";
     const tint = type === "lure" ? 0xff9ed0 : type === "surge" ? 0xffd878 : 0xb8e4ff;
-    g.circle(0, 0, 40).fill({ color: 0x163028, alpha: 0.95 });
-    g.circle(0, 0, 40).stroke({ width: 3, color: 0xe8ffd8, alpha: 0.7 });
+    halo.circle(0, 0, 52).fill({ color: tint, alpha: 0.2 });
+    halo.filters = [
+      new GlowFilter({
+        color: tint,
+        distance: 28,
+        outerStrength: 2.4,
+        innerStrength: 0.4,
+        quality: 0.18,
+      }),
+    ];
+    g.circle(0, 0, 40).fill({ color: 0x163028, alpha: 0.24 });
     const t = new PIXI.Text({ text: icon, style: { fontSize: 40 } });
     t.anchor.set(0.5);
+    t.alpha = 0.98;
+    c.addChild(halo);
     c.addChild(g);
     c.addChild(t);
     c.x = w.x + (Math.random() - 0.5) * 30;
@@ -1669,6 +1800,7 @@ export async function mountGame(hostEl, options = {}) {
     c._tint = tint;
     c.tint = tint;
     c.scale.set(1.45);
+    c._spin = (Math.random() - 0.5) * 0.02;
     boosterDrops.push(c);
     particleLayer.addChild(c);
   };
@@ -1714,6 +1846,7 @@ export async function mountGame(hostEl, options = {}) {
   }
 
   const spawnBloomEvent = (x, y, power = 1, opts = {}) => {
+    power *= 1 + spiritStrength * 0.05;
     const awardWorldLife = opts.awardWorldLife !== false;
     const playSound = opts.playSound !== false;
     const affectedByBoost = opts.affectedByBoost !== false;
@@ -1794,6 +1927,11 @@ export async function mountGame(hostEl, options = {}) {
     worldLife = clamp(worldLife + eff, 0, 100);
     if (worldLife < 95) hasAwakened = false;
     while (nextMilestoneIdx < worldMilestones.length && prev < worldMilestones[nextMilestoneIdx] && worldLife >= worldMilestones[nextMilestoneIdx]) {
+      const ms = worldMilestones[nextMilestoneIdx];
+      hintOverrideMs = Math.max(hintOverrideMs, 2200);
+      if (ms === 25) toastText.text = "The meadow wakes - life stirs around you.";
+      else if (ms === 50) toastText.text = "The world grows richer with every step.";
+      else if (ms === 75) toastText.text = "Near full bloom - the world is almost singing.";
       triggerMilestone();
       nextMilestoneIdx += 1;
     }
@@ -1801,7 +1939,14 @@ export async function mountGame(hostEl, options = {}) {
   };
 
   const applyWorldVariation = () => {
-    const variants = [0xe8fff0, 0xf2ffe2, 0xe6f8ff, 0xfff2e2];
+    const stageVariants = [
+      [0xe8fff0, 0xf2ffe2, 0xe6f8ff, 0xfff2e2],
+      [0xe2ffd6, 0xe9ffd1, 0xe2f8d6, 0xf0ffd8],
+      [0xd8f6d8, 0xd0f0cf, 0xcde8d0, 0xe0f0d8],
+      [0xd8efff, 0xd6f9ff, 0xe0f6ff, 0xd8fff8],
+      [0xd8d2ff, 0xe0d8ff, 0xd8d6ff, 0xe8dcff],
+    ];
+    const variants = stageVariants[worldStage] || stageVariants[0];
     bg.tint = variants[worldVariation % variants.length];
   };
 
@@ -1829,13 +1974,26 @@ export async function mountGame(hostEl, options = {}) {
   const sounds = createSoundManager();
   sounds.playAmbient();
 
+  const MAGICAL_KINDS = new Set([0, 1, 2, 3, 4, 5]);
+  const isMagicalCritter = (cr) => MAGICAL_KINDS.has(cr?._kind);
+  const pickKind = (isSpecial) => {
+    const magicalPool = [0, 1, 2, 3, 4, 5];
+    const commonPool = [0, 1, 2, 3, 4, 5];
+    const pool = isSpecial ? magicalPool : commonPool;
+    return pool[(Math.random() * pool.length) | 0];
+  };
+
   const spawnCritter = (isSpecial) => {
-    const hasRare = worldCritters.some((c) => c._special);
-    if (isSpecial && hasRare) return;
-    const commons = worldCritters.filter((c) => !c._special).length;
+    const specialCount = worldCritters.reduce((acc, c) => acc + (c._special ? 1 : 0), 0);
+    const commons = worldCritters.reduce((acc, c) => acc + (!c._special ? 1 : 0), 0);
+
+    // Allow multiple magical creatures so they're not too rare.
+    const maxSpecialCritters = 3;
+    if (isSpecial && specialCount >= maxSpecialCritters) return;
     if (!isSpecial && commons >= 4) return;
-    if (worldCritters.length >= 6) return;
-    const kind = isSpecial ? 4 + ((Math.random() * 2) | 0) : (Math.random() * 4) | 0;
+    const maxCritters = isSpecial ? 12 : 6;
+    if (worldCritters.length >= maxCritters) return;
+    const kind = pickKind(isSpecial);
     const spr = new PIXI.Sprite(critterTextures[kind]);
     spr.anchor.set(0.5);
     const spread = 320 + Math.random() * 520;
@@ -1844,7 +2002,8 @@ export async function mountGame(hostEl, options = {}) {
     spr.y = clamp(player.y + Math.sin(ang) * spread, -HALF_WORLD + 50, HALF_WORLD - 50);
     const baseScale = 0.85 + Math.random() * 0.2;
     spr.scale.set(isSpecial ? baseScale * SPECIAL_SURPRISE_SCALE_MUL : baseScale);
-    spr._special = kind >= 4;
+    spr._kind = kind;
+    spr._special = MAGICAL_KINDS.has(kind);
     spr._phase = Math.random() * Math.PI * 2;
     spr._hop = 0;
     spr._vx = (Math.random() - 0.5) * 0.35;
@@ -1853,6 +2012,11 @@ export async function mountGame(hostEl, options = {}) {
     spr.alpha = 0.94;
     worldCritters.push(spr);
     critterLayer.addChild(spr);
+    if (window.localStorage?.getItem("debug_critter_children") === "1") {
+      const labels = spr.children.map((ch, i) => ch?.label || ch?.name || ch?.constructor?.name || `child-${i}`);
+      // Helps inspect unexpected overlays attached by future changes.
+      console.log("[critter children]", { kind: spr._kind, special: spr._special, children: labels });
+    }
   };
 
   const spawnLifeAura = (x, y, strength = 1) => {
@@ -1873,6 +2037,26 @@ export async function mountGame(hostEl, options = {}) {
   };
 
   updateLifeTexture();
+  if (Array.isArray(progression.worldMemoryTrail) && progression.worldMemoryTrail.length > 0) {
+    const remembered = progression.worldMemoryTrail.slice(-36);
+    for (let i = 0; i < remembered.length; i += 1) {
+      const p = remembered[i];
+      if (!p || typeof p.x !== "number" || typeof p.y !== "number") continue;
+      const tex = flowerTextures[(Math.random() * flowerTextures.length) | 0];
+      const f = new PIXI.Sprite(tex);
+      f.anchor.set(0.5);
+      f.x = clamp(p.x, -HALF_WORLD + 24, HALF_WORLD - 24);
+      f.y = clamp(p.y, -HALF_WORLD + 24, HALF_WORLD - 24);
+      f.rotation = Math.random() * Math.PI * 2;
+      f.scale.set(0.65 + Math.random() * 0.4);
+      f.alpha = 0.32 + Math.random() * 0.18;
+      f._age = 12000 + Math.random() * 6000;
+      flowers.push(f);
+      floraLayer.addChild(f);
+      addLifeAt(f.x, f.y, 2.6, 0.02);
+    }
+    updateLifeTexture();
+  }
 
   const redrawBackdropTint = () => {
     bgTint.clear();
@@ -1911,8 +2095,36 @@ export async function mountGame(hostEl, options = {}) {
     if (gamePaused) return;
     const dt = Math.min(2.2, ticker.deltaTime);
     onSessionTime?.(ticker.deltaMS);
+    sessionPlayedMs += ticker.deltaMS;
     const cx = app.screen.width * 0.5;
     const cy = app.screen.height * 0.5;
+    if (returnHintPending) {
+      returnHintPending = false;
+      hintOverrideMs = 3200;
+      toastText.text = "Life continued while you were away.";
+    }
+    if (dailyBonusPending) {
+      dailyBonusPending = false;
+      progression.lastDailyBonusDay = dayKey(Date.now());
+      lureCharges = Math.min(LURE_MAX, lureCharges + 1);
+      surgeCharges = Math.min(SURGE_MAX, surgeCharges + 1);
+      sightCharges = Math.min(SIGHT_MAX, sightCharges + 1);
+      addWorldLife(6);
+      hintOverrideMs = Math.max(hintOverrideMs, 3200);
+      toastText.text = "Daily Bloom: the world welcomes you back.";
+      saveProgression({
+        ...progression,
+        spiritStrength,
+        totalAwakenings,
+        lastSeenAt: Date.now(),
+      });
+    }
+    if (offlineGrowthPending > 0.01) {
+      const step = Math.min(offlineGrowthPending, 0.08 * dt);
+      offlineGrowthPending -= step;
+      addWorldLife(step * 4.5);
+      stageBoostSaturation = Math.min(1, stageBoostSaturation + step * 0.02);
+    }
 
     let awakeningMsgAlpha = 0;
     if (awakeningActive) {
@@ -1952,6 +2164,20 @@ export async function mountGame(hostEl, options = {}) {
         if (!afterglowMotesAdded) {
           afterglowMotesAdded = true;
           onWorldAwaken?.();
+          totalAwakenings += 1;
+          spiritStrength = Math.min(12, spiritStrength + 1);
+          worldStage = Math.min(4, Math.floor(totalAwakenings / 2));
+          progression.spiritStrength = spiritStrength;
+          progression.totalAwakenings = totalAwakenings;
+          progression.lastSeenAt = Date.now();
+          saveProgression({
+            ...progression,
+            spiritStrength,
+            totalAwakenings,
+            lastSeenAt: Date.now(),
+          });
+          hintOverrideMs = 2600;
+          toastText.text = `Spirit Strength ${spiritStrength} - Stage ${worldStage + 1} deepens.`;
           for (let i = 0; i < 40; i += 1) {
             const m = new PIXI.Sprite(trailGlowTex);
             m.anchor.set(0.5);
@@ -1992,7 +2218,7 @@ export async function mountGame(hostEl, options = {}) {
     if (helperPresenceCount > 1 && !awakeningActive) {
       coopResonanceTimerMs -= ticker.deltaMS;
       if (coopResonanceTimerMs <= 0) {
-        coopResonanceTimerMs = Math.max(2200, 5600 - helperPresenceCount * 550);
+        coopResonanceTimerMs = Math.max(1600, 4200 - helperPresenceCount * 520);
         const rings = Math.min(5, 1 + helperPresenceCount);
         for (let ri = 0; ri < rings; ri += 1) {
           const a = (ri / rings) * Math.PI * 2 + Math.random() * 0.2;
@@ -2003,7 +2229,7 @@ export async function mountGame(hostEl, options = {}) {
             particleMult: 0.7,
           });
         }
-        addWorldLife(2.4 + helperPresenceCount * 0.7);
+        addWorldLife(3.2 + helperPresenceCount * 1.2);
         screenGlowMs = Math.max(screenGlowMs, 260);
       }
     } else {
@@ -2093,6 +2319,21 @@ export async function mountGame(hostEl, options = {}) {
       spawnBloomEvent(player.x, player.y, 1.5, { awardWorldLife: false, particleMult: 1.2 });
       screenGlowMs = Math.max(screenGlowMs, 460);
     }
+    stageBoostSaturation = lerp(stageBoostSaturation, Math.min(1, stageBoostSaturation + moveSpeed * 0.00008 * dt), 0.025 * dt);
+    if (moveSpeed > 0.2 && !awakeningActive) {
+      microBloomTimerMs -= ticker.deltaMS;
+      if (microBloomTimerMs <= 0) {
+        microBloomTimerMs = 900 - Math.min(360, spiritStrength * 24);
+        spawnBloomEvent(player.x, player.y, 0.5 + spiritStrength * 0.04, {
+          awardWorldLife: false,
+          playSound: false,
+          particleMult: 0.45,
+        });
+        if (Math.random() < 0.24) spawnCritter(false);
+      }
+    } else {
+      microBloomTimerMs = Math.min(1200, microBloomTimerMs + ticker.deltaMS * 0.5);
+    }
     bloomPulseMs = Math.max(0, bloomPulseMs - ticker.deltaMS);
     const bloomPulse = bloomPulseMs > 0 ? Math.sin((1 - bloomPulseMs / 520) * Math.PI) : 0;
     const movePulse = clamp(moveSpeed / 4, 0, 1);
@@ -2115,7 +2356,8 @@ export async function mountGame(hostEl, options = {}) {
       const memIdx = ly * LIFE_W + lx;
       trailMemory[memIdx] = clamp(trailMemory[memIdx] + 0.045 * dt, 0, 1);
     }
-    if (trail.length > 160) trail.shift();
+    const maxTrailPoints = 160 + spiritStrength * 22;
+    if (trail.length > maxTrailPoints) trail.shift();
     auraSpawnAccum += moveSpeed * dt * (1 + awakeningBoost * 0.32 + (hasAwakened ? 0.1 : 0));
     const auraGate = 2.2 / (1 + awakeningBoost * 0.38 + (hasAwakened ? 0.12 : 0));
     if (auraSpawnAccum > auraGate * (1 + eventSuppress * 0.48)) {
@@ -2226,7 +2468,7 @@ export async function mountGame(hostEl, options = {}) {
       if (helperPresenceCount > 1 && mem > 0.5) f.tint = 0xffe8f6;
       else if (mem > 0.35) f.tint = 0xf2ffe8;
       else f.tint = 0xffffff;
-      if (f._age > 18000) {
+      if (f._age > 18000 + spiritStrength * 1400) {
         f.alpha -= 0.0035 * dt;
         if (f.alpha <= 0) {
           f.destroy();
@@ -2284,15 +2526,27 @@ export async function mountGame(hostEl, options = {}) {
       }
     }
 
-    const coopBoost = helperPresenceCount > 1 ? 1 + Math.min(0.35, (helperPresenceCount - 1) * 0.08) : 1;
+    const coopBoost = helperPresenceCount > 1 ? 1.5 + Math.min(0.5, (helperPresenceCount - 2) * 0.15) : 1;
     const growthBoost = (weather.kind === "rain" ? 1.65 : 1) * coopBoost;
-    addLifeAt(player.x, player.y, 5 + (level >= 4 ? 2 : 0), 0.02 * dt * growthBoost);
+    const strengthRadius = 5 + (level >= 4 ? 2 : 0) + spiritStrength * 0.22;
+    addLifeAt(player.x, player.y, strengthRadius, 0.02 * dt * growthBoost * (1 + spiritStrength * 0.04));
     for (let i = 0; i < trail.length; i += 4) {
       const p = trail[i];
       const { lx, ly } = worldToLife(p.x, p.y);
       const mem = trailMemory[ly * LIFE_W + lx];
       const rich = 1 + mem * 0.7;
       addLifeAt(p.x, p.y, 2, 0.0038 * dt * growthBoost * rich);
+    }
+    if (helperPresenceCount > 1) {
+      trailIntersectFxTimerMs -= ticker.deltaMS;
+      const { lx, ly } = worldToLife(player.x, player.y);
+      const dense = trailMemory[ly * LIFE_W + lx];
+      if (dense > 0.58 && trailIntersectFxTimerMs <= 0) {
+        trailIntersectFxTimerMs = 760;
+        spawnBloomEvent(player.x, player.y, 0.92, { awardWorldLife: false, playSound: false, particleMult: 0.88 });
+      }
+    } else {
+      trailIntersectFxTimerMs = 0;
     }
 
     const vitalityEssence = 0.52 + 0.48 * (worldLife / 100);
@@ -2337,6 +2591,7 @@ export async function mountGame(hostEl, options = {}) {
       b._phase += 0.02 * dt;
       b.y = b._baseY + Math.sin(b._phase) * 6;
       b.scale.set(0.96 + Math.sin(b._phase * 1.2) * 0.08);
+      b.rotation += b._spin * dt;
       const dx = b.x - player.x;
       const dy = b.y - player.y;
       if (dx * dx + dy * dy < 44 * 44) {
@@ -2363,6 +2618,7 @@ export async function mountGame(hostEl, options = {}) {
 
     for (let i = worldCritters.length - 1; i >= 0; i -= 1) {
       const cr = worldCritters[i];
+      const magical = isMagicalCritter(cr);
       cr._hop += 0.022 * dt;
       cr.x += cr._vx * dt;
       cr.y += cr._vy * dt + Math.sin(cr._hop) * 0.08;
@@ -2375,25 +2631,24 @@ export async function mountGame(hostEl, options = {}) {
       cr.x = clamp(cr.x, -HALF_WORLD + 40, HALF_WORLD - 40);
       cr.y = clamp(cr.y, -HALF_WORLD + 40, HALF_WORLD - 40);
       const pulse = 0.92 + Math.sin(ticker.lastTime * 0.004 + cr._phase) * 0.06;
-      const baseCritterScale = (1.7 + (cr._special ? 0.24 : 0)) * pulse;
-      cr.scale.set(cr._special ? baseCritterScale * SPECIAL_SURPRISE_SCALE_MUL : baseCritterScale * COMMON_CRITTER_SCALE_MUL);
-      if (cr._special) cr.rotation = Math.sin(ticker.lastTime * 0.0028 + cr._phase) * 0.14;
+      const baseCritterScale = (1.7 + (magical ? 0.24 : 0)) * pulse;
+      cr.scale.set(magical ? baseCritterScale * SPECIAL_SURPRISE_SCALE_MUL : baseCritterScale * COMMON_CRITTER_SCALE_MUL);
+      if (magical) cr.rotation = Math.sin(ticker.lastTime * 0.0028 + cr._phase) * 0.14;
       const dx = cr.x - player.x;
       const dy = cr.y - player.y;
-      const pickR = cr._special ? 56 : 32;
+      const pickR = magical ? 96 : 32;
       if (dx * dx + dy * dy < pickR * pickR) {
-        if (cr._special) {
-          collectedCrittersRare += 1;
+        collectedCrittersRare += 1;
+        if (magical) {
           addWorldLife(4.8);
           spawnBloomEvent(player.x, player.y, 1.9, { particleMult: 1.45 });
           hintOverrideMs = Math.max(hintOverrideMs, 1200);
           toastText.text = "Magical creature found! Awakening surges forward.";
         } else {
-          collectedCrittersCommon += 1;
           addWorldLife(0.62);
           spawnBloomEvent(player.x, player.y, 0.65, { particleMult: 0.7 });
         }
-        sounds.playEffect(cr._special ? "surprise" : "collect", cr._special ? 1 : 1.05);
+        sounds.playEffect(magical ? "surprise" : "collect", magical ? 1 : 1.05);
         cr.destroy({ children: true });
         worldCritters.splice(i, 1);
       }
@@ -2407,7 +2662,7 @@ export async function mountGame(hostEl, options = {}) {
     specialCritterTimerMs -= ticker.deltaMS;
     if (specialCritterTimerMs <= 0) {
       spawnCritter(true);
-      specialCritterTimerMs = 80000 + Math.random() * 110000;
+      specialCritterTimerMs = 18000 + Math.random() * 42000;
     }
 
     surpriseTimerMs -= ticker.deltaMS;
@@ -2490,6 +2745,9 @@ export async function mountGame(hostEl, options = {}) {
       addWorldLife(100 - worldLife);
     }
     const worldProgress = worldLife / 100;
+    const stageDensity = 1 + worldStage * 0.16;
+    bgNoiseNear.alpha = 0.08 + worldProgress * 0.06 * stageDensity;
+    bgNoiseFar.alpha = 0.06 + worldProgress * 0.045 * stageDensity;
     let ambTarget = 0.24 * (0.58 + 0.42 * worldProgress);
     if (awakeningActive && awakeningElapsed >= 780 && awakeningElapsed < 2800) ambTarget = Math.max(ambTarget, 0.31);
     sounds.setAmbientVolumeTarget(ambTarget);
@@ -2568,15 +2826,14 @@ export async function mountGame(hostEl, options = {}) {
         }
       }
       if (best) {
+        const bestMagical = isMagicalCritter(best);
         const sx = cx + (best.x - cam.x) * cam.zoom;
         const sy = cy + (best.y - cam.y) * cam.zoom;
         const m = 48;
         const onScreen = sx > m && sx < app.screen.width - m && sy > m && sy < app.screen.height - m;
         if (onScreen) {
-          critterGuide.alpha = 0.4;
-          critterGuide
-            .circle(sx, sy, 16 + (best._special ? 6 : 0))
-            .stroke({ width: 2, color: best._special ? 0xffe8a8 : 0xc8ffd8, alpha: 0.85 });
+          // Never draw an overlay on top of visible creatures.
+          critterGuide.alpha = 0;
         } else {
           critterGuide.alpha = 0.78;
           const acx = cx;
@@ -2594,7 +2851,7 @@ export async function mountGame(hostEl, options = {}) {
           critterGuide.lineTo(ex + Math.cos(ang + 2.2) * 7, ey + Math.sin(ang + 2.2) * 7);
           critterGuide.lineTo(ex + Math.cos(ang - 2.2) * 7, ey + Math.sin(ang - 2.2) * 7);
           critterGuide.lineTo(ex + Math.cos(ang) * 12, ey + Math.sin(ang) * 12);
-          critterGuide.fill({ color: best._special ? 0xffe8a8 : 0xc8ffd8, alpha: 0.92 });
+          critterGuide.fill({ color: bestMagical ? 0xffe8a8 : 0xc8ffd8, alpha: 0.92 });
         }
       }
     } else {
@@ -2723,7 +2980,8 @@ export async function mountGame(hostEl, options = {}) {
     const maxPeerLines = 6;
     const shown = peerNames.slice(0, maxPeerLines);
     leaderboardHeader.text = `Spirits in this room (${helperPresenceCount})`;
-    leaderboardSub.text = "";
+    const stageNames = ["Soft Meadow", "Richer Growth", "Forest Rise", "Water Light", "Night Bloom"];
+    leaderboardSub.text = `Stage ${worldStage + 1}: ${stageNames[worldStage]}`;
     const lines = [];
     for (let i = 0; i < shown.length; i += 1) {
       lines.push(`${i + 1}. ${shown[i]} —`);
@@ -2739,10 +2997,16 @@ export async function mountGame(hostEl, options = {}) {
 
     boosterLure.setBadge(String(lureCharges));
     boosterLure.setEnabled(lureCharges > 0);
+    boosterLure.setActive(lureActiveMs > 0);
+    boosterLure.updateHalo(ticker.lastTime);
     boosterSurge.setBadge(String(surgeCharges));
     boosterSurge.setEnabled(surgeCharges > 0);
+    boosterSurge.setActive(surgeBoostMs > 0);
+    boosterSurge.updateHalo(ticker.lastTime);
     boosterSight.setBadge(String(sightCharges));
     boosterSight.setEnabled(sightCharges > 0);
+    boosterSight.setActive(false);
+    boosterSight.updateHalo(ticker.lastTime);
     lurePulseMs = Math.max(0, lurePulseMs - ticker.deltaMS);
     surgePulseMs = Math.max(0, surgePulseMs - ticker.deltaMS);
     sightPulseMs = Math.max(0, sightPulseMs - ticker.deltaMS);
@@ -2802,12 +3066,29 @@ export async function mountGame(hostEl, options = {}) {
     for (let i = 0; i < worldCritters.length; i += 1) {
       const cr = worldCritters[i];
       const cp = toMini(cr.x, cr.y);
-      miniMapDots.circle(cp.x, cp.y, cr._special ? 2.8 : 2).fill({ color: cr._special ? 0xffe8a8 : 0xa8e8c8, alpha: 0.95 });
+      const magical = isMagicalCritter(cr);
+      miniMapDots.circle(cp.x, cp.y, magical ? 5 : 2).fill({ color: magical ? 0xffe8a8 : 0xa8e8c8, alpha: 0.95 });
     }
   };
   app.ticker.add(onTick);
 
   const cleanup = () => {
+    if (sessionPlayedMs > 3 * 60 * 1000 && spiritStrength < 12) {
+      spiritStrength = Math.min(12, spiritStrength + 1);
+    }
+    const memoryStride = Math.max(4, Math.floor(16 - spiritStrength * 0.6));
+    const worldMemoryTrail = [];
+    for (let i = 0; i < trail.length; i += memoryStride) {
+      worldMemoryTrail.push({ x: trail[i].x, y: trail[i].y });
+    }
+    saveProgression({
+      ...progression,
+      spiritStrength,
+      totalAwakenings,
+      lastSeenAt: Date.now(),
+      lastDailyBonusDay: progression.lastDailyBonusDay,
+      worldMemoryTrail: worldMemoryTrail.slice(-64),
+    });
     app.ticker.remove(onTick);
     app.renderer.off("resize", onResize);
     stage.off("pointermove", syncPointer);

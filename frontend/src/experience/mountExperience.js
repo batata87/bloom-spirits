@@ -149,20 +149,74 @@ function makeCornerChip(symbol) {
 
 function fillWelcomePattern(g, w, h) {
   g.clear();
-  const seed = 0x9e3779b9;
-  let state = 12345 + Math.floor(w) * 17 + Math.floor(h) * 31;
-  const rnd = () => {
-    state = (state + seed) | 0;
-    state = Math.imul(state ^ (state >>> 16), 0x7feb352d);
-    return state >>> 0;
-  };
-  for (let i = 0; i < 220; i += 1) {
-    const x = (rnd() % 10000) / 10000;
-    const y = (rnd() % 10000) / 10000;
-    const r = 2 + (rnd() % 11);
-    const a = 0.028 + (rnd() % 10) / 260;
-    g.circle(x * w, y * h, r).fill({ color: 0xb8f5d0, alpha: a });
+  // Magical-garden texture: soft canopy haze + petal motes + faint vine arcs.
+  for (let i = 0; i < 42; i += 1) {
+    const x = (i * 97) % w;
+    const y = ((i * 173) % h) * 0.96;
+    const rx = 28 + (i % 7) * 8;
+    const ry = 18 + (i % 5) * 7;
+    const col = i % 3 === 0 ? 0xa5deb8 : i % 3 === 1 ? 0xbbe7c7 : 0x96d2ac;
+    g.ellipse(x, y, rx, ry).fill({ color: col, alpha: 0.02 + (i % 4) * 0.005 });
   }
+  for (let i = 0; i < 300; i += 1) {
+    const x = (i * 53.7) % w;
+    const y = (i * 89.3) % h;
+    const r = 1 + (i % 3) * 0.9;
+    const col = i % 4 === 0 ? 0xf0ffd8 : i % 4 === 1 ? 0xfff2d8 : 0xd9ffd8;
+    g.circle(x, y, r).fill({ color: col, alpha: 0.02 + (i % 5) * 0.008 });
+  }
+  for (let i = 0; i < 12; i += 1) {
+    const y = h * (0.14 + (i / 12) * 0.72);
+    g.moveTo(0, y + Math.sin(i * 1.7) * 8)
+      .bezierCurveTo(w * 0.25, y - 22, w * 0.68, y + 16, w, y - 6)
+      .stroke({ width: 1.2, color: 0xbceccf, alpha: 0.04 });
+  }
+}
+
+function makeWelcomeFlowerTexture(variant) {
+  const W = 96;
+  const H = 96;
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const ctx = c.getContext("2d");
+  const cx = W * 0.5;
+  const cy = H * 0.45;
+  const themes = [
+    { petalHi: "#ff6eb4", petalLo: "#ff9ec8", edge: "#c83878", center: "#fff8c8" },
+    { petalHi: "#ffd040", petalLo: "#ffe888", edge: "#d09010", center: "#fffef0" },
+    { petalHi: "#7ab0ff", petalLo: "#c8dcff", edge: "#4070c8", center: "#f4f8ff" },
+    { petalHi: "#ff9078", petalLo: "#ffc0b0", edge: "#d85840", center: "#fff0e8" },
+    { petalHi: "#e868c8", petalLo: "#c8a0ff", edge: "#9030a0", center: "#fff5ff" },
+  ];
+  const t = themes[variant % themes.length];
+  const nPetals = 6 + (variant % 3);
+  const rx = 8 + (variant % 2);
+  const ry = 16 + (variant % 3);
+  for (let i = 0; i < nPetals; i += 1) {
+    const a = (i / nPetals) * Math.PI * 2 - Math.PI / 2;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(a);
+    const g = ctx.createLinearGradient(0, -ry - 6, 0, 6);
+    g.addColorStop(0, t.petalHi);
+    g.addColorStop(0.55, t.petalLo);
+    g.addColorStop(1, t.edge);
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(0, -12, rx, ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  const cg = ctx.createRadialGradient(cx, cy - 1, 0, cx, cy, 11);
+  cg.addColorStop(0, t.center);
+  cg.addColorStop(0.8, t.edge);
+  cg.addColorStop(1, t.edge);
+  ctx.fillStyle = cg;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 8.5, 0, Math.PI * 2);
+  ctx.fill();
+  return PIXI.Texture.from(c);
 }
 
 function buildSideStrip() {
@@ -438,6 +492,7 @@ export async function mountExperience(hostEl) {
   const welcomeFogA = new PIXI.Graphics();
   const welcomeFogB = new PIXI.Graphics();
   const welcomeSpores = new PIXI.Graphics();
+  const welcomeFlowersLayer = new PIXI.Container();
   /** Soft blobs at the bottom so the screen feels less empty / harsh. */
   const welcomeFooterSoft = new PIXI.Graphics();
   const title = new PIXI.Text({
@@ -465,6 +520,7 @@ export async function mountExperience(hostEl) {
   });
   wSubtitle.anchor.set(0.5);
   wSubtitle.alpha = 0.78;
+  wSubtitle.visible = false;
   const wSupportLine = new PIXI.Text({
     text: "Explore, leave gifts, meet friends, and watch your garden grow - each step matters.",
     style: {
@@ -479,6 +535,7 @@ export async function mountExperience(hostEl) {
   });
   wSupportLine.anchor.set(0.5);
   wSupportLine.alpha = 0.68;
+  wSupportLine.visible = false;
   const welcomeMoveHint = new PIXI.Text({
     text: "Where you move, life begins",
     style: {
@@ -492,6 +549,7 @@ export async function mountExperience(hostEl) {
   });
   welcomeMoveHint.anchor.set(0.5);
   welcomeMoveHint.alpha = 0.62;
+  welcomeMoveHint.visible = false;
 
   const btnSpiritWardrobe = new PIXI.Container();
   const btnSpiritWardrobeBg = new PIXI.Graphics();
@@ -568,6 +626,9 @@ export async function mountExperience(hostEl) {
   if (!showWelcomeMoveHint) welcomeMoveHint.visible = false;
 
   const welcomeSporesState = [];
+  const welcomeFlowerTextures = [0, 1, 2, 3, 4].map((v) => makeWelcomeFlowerTexture(v));
+  const welcomeFlowerSprites = [];
+  const welcomePointer = { x: app.screen.width * 0.5, y: app.screen.height * 0.5 };
   function initWelcomeSpores(w, h) {
     welcomeSporesState.length = 0;
     for (let i = 0; i < 66; i += 1) {
@@ -579,6 +640,33 @@ export async function mountExperience(hostEl) {
         vx: (Math.random() - 0.5) * 0.16,
         vy: (Math.random() - 0.5) * 0.12,
       });
+    }
+  }
+  function initWelcomeFlowers(w, h) {
+    for (let i = 0; i < welcomeFlowerSprites.length; i += 1) {
+      welcomeFlowerSprites[i].destroy();
+    }
+    welcomeFlowerSprites.length = 0;
+    welcomeFlowersLayer.removeChildren();
+    const count = Math.max(64, Math.min(132, ((w * h) / 18000) | 0));
+    for (let i = 0; i < count; i += 1) {
+      const s = new PIXI.Sprite(welcomeFlowerTextures[(Math.random() * welcomeFlowerTextures.length) | 0]);
+      s.anchor.set(0.5);
+      s.x = Math.random() * w;
+      s.y = Math.random() * h;
+      s._baseX = s.x;
+      s._baseY = s.y;
+      s._phase = Math.random() * Math.PI * 2;
+      s._vx = (Math.random() - 0.5) * 0.045;
+      s._vy = (Math.random() - 0.5) * 0.03;
+      s._depth = 0.2 + Math.random() * 0.8;
+      s._baseScale = (0.16 + Math.random() * 0.3) * (0.65 + s._depth * 0.6);
+      s.scale.set(s._baseScale);
+      s.alpha = 0.1 + s._depth * 0.24;
+      s.rotation = Math.random() * Math.PI * 2;
+      s.tint = Math.random() < 0.2 ? 0xf8ffe8 : 0xffffff;
+      welcomeFlowersLayer.addChild(s);
+      welcomeFlowerSprites.push(s);
     }
   }
   function tickWelcomeAtmosphere() {
@@ -617,8 +705,36 @@ export async function mountExperience(hostEl) {
       if (s.y > h) s.y -= h;
       welcomeSpores.circle(s.x, s.y, s.r).fill({ color: 0xd6ffe6, alpha: s.a });
     }
+    for (let i = 0; i < welcomeFlowerSprites.length; i += 1) {
+      const f = welcomeFlowerSprites[i];
+      f._phase += 0.006;
+      f._baseX += f._vx;
+      f._baseY += f._vy;
+      const dx = welcomePointer.x - f._baseX;
+      const dy = welcomePointer.y - f._baseY;
+      const d = Math.hypot(dx, dy);
+      const react = Math.max(0, 1 - d / 190);
+      const swayX = Math.sin(f._phase) * (2.2 + f._depth * 2.8);
+      const swayY = Math.cos(f._phase * 0.9) * (1.8 + f._depth * 2.2);
+      f.x = f._baseX + swayX - dx * react * 0.05;
+      f.y = f._baseY + swayY - dy * react * 0.05;
+      f.rotation += 0.0005 + f._depth * 0.0009;
+      const pulse = Math.sin(f._phase * 1.4) * 0.5 + 0.5;
+      f.alpha = 0.08 + f._depth * 0.2 + pulse * 0.07 + react * 0.12;
+      const scaleBoost = 1 + react * 0.16;
+      f.scale.set(f._baseScale * (0.94 + pulse * 0.08) * scaleBoost);
+      if (f._baseX < -28) f._baseX = w + 28;
+      if (f._baseX > w + 28) f._baseX = -28;
+      if (f._baseY < -28) f._baseY = h + 28;
+      if (f._baseY > h + 28) f._baseY = -28;
+    }
   }
   app.ticker.add(tickWelcomeAtmosphere);
+  welcomeRoot.eventMode = "static";
+  welcomeRoot.on("pointermove", (e) => {
+    welcomePointer.x = e.global.x;
+    welcomePointer.y = e.global.y;
+  });
 
   welcomeRoot.addChild(wBg);
   welcomeRoot.addChild(wPattern);
@@ -627,6 +743,7 @@ export async function mountExperience(hostEl) {
   welcomeRoot.addChild(welcomeCenterLight);
   welcomeRoot.addChild(welcomeFogA);
   welcomeRoot.addChild(welcomeFogB);
+  welcomeRoot.addChild(welcomeFlowersLayer);
   welcomeRoot.addChild(welcomeSpores);
   welcomeRoot.addChild(wDim);
   welcomeRoot.addChild(welcomeFooterSoft);
@@ -899,24 +1016,18 @@ export async function mountExperience(hostEl) {
     wSubtitle.x = w * 0.5;
     wSubtitle.style.wordWrapWidth = Math.min(560, w - 36);
     const titleBottom = title.y + title.height * 0.5;
-    const subtitleGap = 30;
-    wSubtitle.y = titleBottom + subtitleGap + wSubtitle.height * 0.5;
-    wSupportLine.x = w * 0.5;
-    wSupportLine.style.wordWrapWidth = Math.min(620, w - 52);
-    const subtitleBottom = wSubtitle.y + wSubtitle.height * 0.5;
-    const supportGap = 16;
-    wSupportLine.y = subtitleBottom + supportGap + wSupportLine.height * 0.5;
     btnSpiritWardrobe.x = w * 0.5 - 110;
-    btnSpiritWardrobe.y = Math.min(wSupportLine.y + wSupportLine.height * 0.5 + 24, h - 224);
+    btnSpiritWardrobe.y = Math.min(titleBottom + 30, h - 224);
     const ctaY = Math.min(btnSpiritWardrobe.y + 52, h - 156);
     btnEnterWrap.x = w * 0.5 - 158;
     btnEnterWrap.y = ctaY;
     welcomeMoveHint.x = w * 0.5;
     welcomeMoveHint.y = ctaY + 90;
-    welcomeMoveHint.visible = showWelcomeMoveHint;
+    welcomeMoveHint.visible = false;
     btnLogin.container.x = w * 0.5 - 130;
     btnLogin.container.y = Math.min(h - 50, welcomeMoveHint.y + 28);
     initWelcomeSpores(w, h);
+    initWelcomeFlowers(w, h);
 
     pBg.x = w * 0.5;
     pBg.y = h * 0.5;
@@ -1161,9 +1272,11 @@ export async function mountExperience(hostEl) {
 
   const cleanup = () => {
     app.ticker.remove(tickWelcomeAtmosphere);
+    welcomeRoot.removeAllListeners("pointermove");
     window.removeEventListener("keydown", onEscapeWardrobe);
     unsubAuth();
     app.renderer.off("resize", layoutFlowScreens);
+    for (let i = 0; i < welcomeFlowerTextures.length; i += 1) welcomeFlowerTextures[i].destroy(true);
     gameApi.cleanup();
     modal.remove();
     app.destroy(true, { children: true, texture: true });
