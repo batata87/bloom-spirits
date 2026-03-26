@@ -551,7 +551,7 @@ export async function mountExperience(hostEl) {
     const loggedIn = getStorageMode() === "account";
     btnLogin.container.visible = !loggedIn;
     btnGoogle.container.visible = !loggedIn;
-    btnStore.container.visible = loggedIn;
+    btnStore.container.visible = true;
     btnProfileQuick.container.visible = true;
     refreshAccountTopBar();
   }
@@ -583,6 +583,10 @@ export async function mountExperience(hostEl) {
   storeRoot.addChild(storeUi.root);
   btnStore.container.on("pointerdown", () => {
     playSoftClick();
+    if (getStorageMode() !== "account") {
+      window.alert("Please login with Google first to use the Store.");
+      return;
+    }
     storeUi.setProfile(accountProfile);
     storeUi.setStatus("");
     storeUi.open();
