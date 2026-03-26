@@ -1175,10 +1175,10 @@ export async function mountExperience(hostEl) {
     versionLabel.y = h - 8;
     accountTopBar.x = w - 14 - accountTopBar.width;
     accountTopBar.y = 12;
-    btnStore.container.x = w - 14 - 96;
-    btnStore.container.y = 46;
-    btnProfileQuick.container.x = w - 14 - 96;
-    btnProfileQuick.container.y = 84;
+    btnStore.container.x = 14;
+    btnStore.container.y = 12;
+    btnProfileQuick.container.x = 14;
+    btnProfileQuick.container.y = 50;
     storeUi.layout();
     layoutWardrobe();
   }
