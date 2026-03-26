@@ -552,7 +552,7 @@ export async function mountExperience(hostEl) {
     btnLogin.container.visible = !loggedIn;
     btnGoogle.container.visible = !loggedIn;
     btnStore.container.visible = true;
-    btnProfileQuick.container.visible = true;
+    btnProfileQuick.container.visible = active === "welcome";
     refreshAccountTopBar();
   }
 
@@ -1039,7 +1039,7 @@ export async function mountExperience(hostEl) {
     style: { ...TEXT_SOFT, fontSize: 12, letterSpacing: 0.05 },
   });
   pSpiritHint.anchor.set(0.5);
-  const btnBack = makeRoundedButton("Back to Game", 200, 44);
+  const btnBack = makeRoundedButton("Back to Home", 200, 44);
   const btnLogoutP = makeRoundedButton("Leave the world", 200, 44);
 
   profileRoot.addChild(pBg);
@@ -1196,6 +1196,7 @@ export async function mountExperience(hostEl) {
     const dur = 0.5;
     const ease = "power2.inOut";
     active = name;
+    btnProfileQuick.container.visible = name === "welcome";
 
     if (name === "welcome") {
       wardScene?.stopAnimations();
@@ -1285,7 +1286,7 @@ export async function mountExperience(hostEl) {
 
   btnBack.container.on("pointerdown", () => {
     playSoftClick();
-    showScreen("game");
+    showScreen("welcome");
   });
   btnLogoutP.container.on("pointerdown", () => {
     void onLogoutClick();
