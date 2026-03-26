@@ -546,8 +546,8 @@ export async function mountExperience(hostEl) {
 
   function refreshAuthButtons() {
     const loggedIn = getStorageMode() === "account";
-    btnLogin.container.visible = !loggedIn && isSupabaseConfigured;
-    btnGoogle.container.visible = !loggedIn && isSupabaseConfigured;
+    btnLogin.container.visible = !loggedIn;
+    btnGoogle.container.visible = !loggedIn;
     btnStore.container.visible = loggedIn;
     refreshAccountTopBar();
   }
@@ -862,7 +862,8 @@ export async function mountExperience(hostEl) {
   welcomeRoot.addChild(btnGoogle.container);
 
   if (!isSupabaseConfigured) {
-    btnLogin.container.visible = false;
+    btnLogin.container.alpha = 0.75;
+    btnGoogle.container.alpha = 1;
   }
 
   refreshWelcomeProfile();
@@ -1264,6 +1265,7 @@ export async function mountExperience(hostEl) {
     const { error } = await login();
     if (error) {
       console.error("[Bloom Spirits] Google sign-in failed", error);
+      window.alert("Google login is unavailable right now. Please verify Supabase env variables in this deployment.");
     }
   });
 
