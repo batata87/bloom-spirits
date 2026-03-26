@@ -328,6 +328,11 @@ function makeModeCard(mode, onPlay) {
   foot.x = cw * 0.5;
   foot.y = ch - 58;
   let playWrap;
+  const triggerPlay = (e) => {
+    if (mode.disabled) return;
+    e?.stopPropagation?.();
+    onPlay(mode);
+  };
   if (mode.disabled) {
     const pg = new PIXI.Graphics();
     pg.roundRect(8, ch - 44, cw - 16, 36, 12).fill({ color: 0x2a3a32, alpha: 0.9 });
@@ -347,10 +352,8 @@ function makeModeCard(mode, onPlay) {
     const btn = makePrimaryBattleButton("Play", cw - 16, 38);
     btn.container.x = 8;
     btn.container.y = ch - 44;
-    btn.container.on("pointerdown", (e) => {
-      e.stopPropagation();
-      onPlay(mode);
-    });
+    btn.container.on("pointerdown", triggerPlay);
+    btn.container.on("pointertap", triggerPlay);
     playWrap = btn.container;
   }
   c.addChild(g);
@@ -362,6 +365,10 @@ function makeModeCard(mode, onPlay) {
   c.eventMode = "static";
   c.hitArea = new PIXI.Rectangle(0, 0, cw, ch);
   c.cursor = mode.disabled ? "default" : "pointer";
+  if (!mode.disabled) {
+    c.on("pointerdown", triggerPlay);
+    c.on("pointertap", triggerPlay);
+  }
   return c;
 }
 
@@ -454,6 +461,7 @@ export async function mountExperience(hostEl) {
     setPaused: () => {},
     setSpiritLook: () => {},
     setPlayerLabel: () => {},
+    setGameMode: () => {},
     cleanup: () => {},
   };
   const mountGameTask = mountGame(hostEl, {
@@ -909,7 +917,7 @@ export async function mountExperience(hostEl) {
 
   // —— Journey mode picker (after “Enter the world” / sign-in) ——
   const msBackdrop = new PIXI.Graphics();
-  msBackdrop.eventMode = "static";
+  msBackdrop.eventMode = "none";
   msBackdrop.cursor = "pointer";
   const msTitle = new PIXI.Text({
     text: "Choose your journey",
@@ -940,7 +948,11 @@ export async function mountExperience(hostEl) {
   GAME_MODES.forEach((mode) => {
     const card = makeModeCard(mode, (m) => {
       playSoftClick();
-      gameApi.setGameMode(m.id, m.title);
+      try {
+        gameApi.setGameMode(m.id, m.title);
+      } catch (e) {
+        console.error("[Bloom Spirits] setGameMode failed", e);
+      }
       modeSelectRoot.visible = false;
       modeSelectRoot.alpha = 0;
       enterGame();
@@ -955,6 +967,8 @@ export async function mountExperience(hostEl) {
   modeSelectRoot.addChild(msClose);
   modeSelectRoot.visible = false;
   modeSelectRoot.alpha = 0;
+  modeSelectRoot.eventMode = "static";
+  modeSelectRoot.interactiveChildren = true;
   modeSelectRoot.sortableChildren = true;
   msTitle.zIndex = 2;
   msSubtitle.zIndex = 2;
@@ -1042,7 +1056,7 @@ export async function mountExperience(hostEl) {
     });
   }
 
-  msBackdrop.on("pointerdown", () => dismissModeSelect());
+  // Backdrop is non-interactive so it cannot swallow card clicks.
   msClose.on("pointerdown", (e) => {
     e.stopPropagation();
     dismissModeSelect();
