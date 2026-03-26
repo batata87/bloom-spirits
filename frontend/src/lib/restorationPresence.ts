@@ -16,10 +16,10 @@ export type RestorationPresenceUpdate = {
 
 function sessionKey(): string {
   try {
-    let k = localStorage.getItem(STORAGE_KEY);
+    let k = sessionStorage.getItem(STORAGE_KEY);
     if (!k) {
       k = `s-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-      localStorage.setItem(STORAGE_KEY, k);
+      sessionStorage.setItem(STORAGE_KEY, k);
     }
     return k;
   } catch {
@@ -110,6 +110,7 @@ export function subscribeRestorationPresence(
   const sk = sessionKey();
   const cfg = roomConfig();
   const topic = channelName(cfg.key);
+  let authUserId = sk;
 
   const sync = () => {
     if (!ch) return;
@@ -117,6 +118,7 @@ export function subscribeRestorationPresence(
     const keys = Object.keys(state);
     const n = Math.max(1, keys.length);
     const peers = extractPeers(state);
+    console.log("[Bloom Spirits] Presence sync online players:", n);
     onChange({
       count: n,
       multiplier: helpersToMultiplier(n),
@@ -125,16 +127,37 @@ export function subscribeRestorationPresence(
     });
   };
 
-  ch = supabase.channel(topic, {
-    config: { presence: { key: sk } },
-  });
-
-  ch.on("presence", { event: "sync" }, sync).subscribe(async (status) => {
-    if (status === "SUBSCRIBED" && ch) {
-      await ch.track({ name: displayName, at: joinedAt });
-      sync();
+  const init = async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      const token = data.session?.access_token;
+      const uid = data.session?.user?.id;
+      if (token) supabase.realtime.setAuth(token);
+      if (uid) authUserId = uid;
+    } catch (e) {
+      console.error("[Bloom Spirits] Failed to initialize presence auth", e);
     }
-  });
+
+    ch = supabase.channel(topic, {
+      config: { presence: { key: authUserId } },
+    });
+
+    ch
+      .on("presence", { event: "sync" }, sync)
+      .on("system", {}, (payload) => {
+        const msg = JSON.stringify(payload || {});
+        if (/rls|postgres rls|permission denied/i.test(msg)) {
+          console.error("[Bloom Spirits] Presence channel rejected by Postgres RLS", payload);
+        }
+      })
+      .subscribe(async (status) => {
+        if (status === "SUBSCRIBED" && ch) {
+          await ch.track({ name: displayName, at: joinedAt });
+          sync();
+        }
+      });
+  };
+  void init();
 
   const setDisplayName = (name: string) => {
     displayName = name.trim() || "Guest";

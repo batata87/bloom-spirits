@@ -25,7 +25,7 @@ import {
 } from "../session/playerStore.js";
 import { login, logout, subscribeAuth } from "../lib/auth.ts";
 import { ensureAndLoadProfile, loadProfile, purchaseWithCreatures } from "../lib/profileService.ts";
-import { isSupabaseConfigured } from "../lib/supabaseClient.ts";
+import { getSupabase, isSupabaseConfigured } from "../lib/supabaseClient.ts";
 import { playSoftClick } from "../ui/softClick.js";
 
 /** Softer, readable UI — Nunito reads friendlier than dense small Montserrat. */
@@ -1373,6 +1373,13 @@ export async function mountExperience(hostEl) {
   }, 1800);
 
   const unsubAuth = subscribeAuth(async (event, session) => {
+    if (session?.access_token && isSupabaseConfigured) {
+      try {
+        getSupabase().realtime.setAuth(session.access_token);
+      } catch (e) {
+        console.error("[Bloom Spirits] Failed to set realtime auth token", e);
+      }
+    }
     if (event === "INITIAL_SESSION") {
       authBootstrapped = true;
       window.clearTimeout(bootFallbackTimer);

@@ -852,10 +852,10 @@ export async function mountGame(hostEl, options = {}) {
   const worldPresenceStorageKey = "bloom_world_presence_key";
   const getWorldPresenceKey = () => {
     try {
-      let k = localStorage.getItem(worldPresenceStorageKey);
+      let k = sessionStorage.getItem(worldPresenceStorageKey);
       if (!k) {
         k = `w-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
-        localStorage.setItem(worldPresenceStorageKey, k);
+        sessionStorage.setItem(worldPresenceStorageKey, k);
       }
       return k;
     } catch {
@@ -1028,13 +1028,29 @@ export async function mountGame(hostEl, options = {}) {
     }
   };
 
-  const initWorldPresence = () => {
+  const initWorldPresence = async () => {
     if (!isSupabaseConfigured) return;
     try {
       const supabase = getSupabase();
-      worldChannel = supabase.channel("world", { config: { presence: { key: worldPresenceKey } } });
+      let presenceKey = worldPresenceKey;
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data.session?.access_token;
+        const uid = data.session?.user?.id;
+        if (token) supabase.realtime.setAuth(token);
+        if (uid) presenceKey = uid;
+      } catch (e) {
+        console.error("[Bloom Spirits] Failed to initialize world realtime auth", e);
+      }
+      worldChannel = supabase.channel("world", { config: { presence: { key: presenceKey } } });
       worldChannel
         .on("presence", { event: "sync" }, syncRemoteSpiritsFromState)
+        .on("system", {}, (payload) => {
+          const msg = JSON.stringify(payload || {});
+          if (/rls|postgres rls|permission denied/i.test(msg)) {
+            console.error("[Bloom Spirits] World channel rejected by Postgres RLS", payload);
+          }
+        })
         .on("presence", { event: "join" }, (payload) => {
           const key = payload?.key;
           if (!key) return;
@@ -1052,6 +1068,10 @@ export async function mountGame(hostEl, options = {}) {
         .subscribe(async (status) => {
           if (status === "SUBSCRIBED" && worldChannel) {
             worldSubscribed = true;
+            try {
+              const state = worldChannel.presenceState() || {};
+              console.log("[Bloom Spirits] World presence sync online players:", Math.max(1, Object.keys(state).length));
+            } catch {}
             try {
               await worldChannel.track({
                 x: player.x,
@@ -1857,9 +1877,9 @@ export async function mountGame(hostEl, options = {}) {
       d.moveTo(0, 0).lineTo(0, len).stroke({ width: 2.2, color: 0xa7dbff, alpha: 0.58 });
       d.x = Math.random() * app.screen.width;
       d.y = Math.random() * app.screen.height;
-      // Keep rain mostly vertical; only a tiny horizontal drift.
-      d._vx = (Math.random() - 0.5) * 0.12;
-      d._vy = 3.2 + Math.random() * 1.8;
+      // Strongly vertical rain: almost no horizontal travel.
+      d._vx = (Math.random() - 0.5) * 0.03;
+      d._vy = 4.2 + Math.random() * 2.2;
       weatherLayer.addChild(d);
       rainDrops.push(d);
     }
@@ -1888,7 +1908,7 @@ export async function mountGame(hostEl, options = {}) {
   let beatTimerMs = 0;
   let beatDurationMs = 1700 + Math.random() * 600;
   const player = { x: 0, y: 0 };
-  initWorldPresence();
+  void initWorldPresence();
   const cam = { x: 0, y: 0, zoom: 0.65 };
 
   const addLifeAt = (wx, wy, rCells, amount) => {
@@ -3182,10 +3202,11 @@ export async function mountGame(hostEl, options = {}) {
       const influence = Math.max(0, 1 - rd / 170);
       if (influence > 0.001) {
         const awayX = rx / rd;
-        d.x += awayX * influence * (0.22 + moveSpeed * 0.15) * dt;
-        d.rotation = awayX * influence * 0.22;
+        // Keep interaction subtle so rain never reads as horizontal.
+        d.x += awayX * influence * 0.04 * dt;
+        d.rotation = awayX * influence * 0.08;
       } else {
-        d.rotation *= 0.85;
+        d.rotation *= 0.75;
       }
       d.x += d._vx * dt;
       d.y += d._vy * dt;
