@@ -948,14 +948,7 @@ export async function mountExperience(hostEl) {
   GAME_MODES.forEach((mode) => {
     const card = makeModeCard(mode, (m) => {
       playSoftClick();
-      try {
-        gameApi.setGameMode(m.id, m.title);
-      } catch (e) {
-        console.error("[Bloom Spirits] setGameMode failed", e);
-      }
-      modeSelectRoot.visible = false;
-      modeSelectRoot.alpha = 0;
-      enterGame();
+      startJourney(m.id, m.title);
     });
     msCardsRow.addChild(card);
   });
@@ -1041,9 +1034,7 @@ export async function mountExperience(hostEl) {
   function dismissModeSelect() {
     playSoftClick();
     if (getStorageMode() === "account") {
-      gameApi.setGameMode("restoration", "Endless Restoration");
-      hideModeSelectInstant();
-      enterGame();
+      startJourney("restoration", "Endless Restoration");
       return;
     }
     gsap.to(modeSelectRoot, {
@@ -1298,6 +1289,16 @@ export async function mountExperience(hostEl) {
     showScreen("game");
   }
 
+  function startJourney(modeId = "restoration", modeTitle = "Endless Restoration") {
+    try {
+      gameApi.setGameMode(modeId, modeTitle);
+    } catch (e) {
+      console.error("[Bloom Spirits] setGameMode failed", e);
+    }
+    hideModeSelectInstant();
+    enterGame();
+  }
+
   btnEnter.container.on("pointerdown", () => {
     playSoftClick();
     showWelcomeMoveHint = false;
@@ -1310,7 +1311,8 @@ export async function mountExperience(hostEl) {
     saveGuestPlayer({ name: guest.name, isGuest: true, spiritLook: selectedSpiritLook });
     gameApi.setPlayerLabel(guest.name);
     gameApi.setSpiritLook(selectedSpiritLook);
-    openModeSelect();
+    // Temporary hard-fail-safe: go straight to playable mode.
+    startJourney("restoration", "Endless Restoration");
   });
   btnLogin.container.on("pointerdown", () => {
     playSoftClick();
