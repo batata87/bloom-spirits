@@ -818,6 +818,14 @@ export async function mountGame(hostEl, options = {}) {
   const spirit = new PIXI.Sprite(spiritLookTextures[activeSpiritLook]);
   spirit.anchor.set(0.5);
   spirit.scale.set(1.55);
+  const spiritGlowFx = new GlowFilter({
+    color: 0xcaffd9,
+    distance: 18,
+    outerStrength: 1.2,
+    innerStrength: 0.45,
+    quality: 0.2,
+  });
+  spirit.filters = [spiritGlowFx];
   spiritLayer.addChild(spirit);
 
   const soul = new PIXI.Sprite(soulLookTextures[activeSpiritLook]);
@@ -857,6 +865,18 @@ export async function mountGame(hostEl, options = {}) {
   const trees = [];
   const bloomBursts = [];
   const bloomShockwaves = [];
+  const createRipple = (x, y, power = 1) => {
+    const shock = new PIXI.Graphics();
+    shock.circle(0, 0, 16).stroke({ width: 1.8, color: 0xffffff, alpha: 0.9 });
+    shock.x = x;
+    shock.y = y;
+    shock._age = 0;
+    shock._life = 400;
+    shock._baseScale = 0.4 + Math.min(0.35, power * 0.18);
+    shock._maxScale = 1.05 + Math.min(0.75, power * 0.34);
+    bloomShockwaves.push(shock);
+    particleLayer.addChild(shock);
+  };
 
   const essences = [];
   const boosterDrops = [];
@@ -1949,16 +1969,7 @@ export async function mountGame(hostEl, options = {}) {
     ring._life = 900;
     bloomBursts.push(ring);
     particleLayer.addChild(ring);
-    const shock = new PIXI.Graphics();
-    shock.circle(0, 0, 16).stroke({ width: 2, color: 0xffffff, alpha: 0.92 });
-    shock.x = x;
-    shock.y = y;
-    shock._age = 0;
-    shock._life = 500;
-    shock._baseScale = 0.45 + Math.min(0.4, power * 0.2);
-    shock._maxScale = 1.35 + Math.min(0.85, power * 0.38);
-    bloomShockwaves.push(shock);
-    particleLayer.addChild(shock);
+    createRipple(x, y, power);
     for (let i = 0; i < nHalos; i += 1) {
       const halo = new PIXI.Sprite(trailGlowTex);
       halo.anchor.set(0.5);
@@ -2420,9 +2431,13 @@ export async function mountGame(hostEl, options = {}) {
       awakeningActive && awakeningElapsed > 780 && awakeningElapsed < 3000
         ? Math.sin((awakeningElapsed - 780) * 0.0033) * 0.11 * awakeningBoost
         : 0;
-    spirit.scale.set(
-      1.52 + beat * 0.08 + movePulse * 0.08 + bloomPulse * 0.14 + awakeningEm + awakeningBoost * 0.1 + afterglowBreath,
-    );
+    const baseSpiritScale = 1.52 + beat * 0.08 + movePulse * 0.08 + bloomPulse * 0.14 + awakeningEm + awakeningBoost * 0.1 + afterglowBreath;
+    const stretch = clamp(moveSpeed / 7.2, 0, 0.12);
+    spirit.scale.set(baseSpiritScale - stretch * 0.45, baseSpiritScale + stretch * 0.7);
+    spirit.rotation = velocity.x * 0.0045;
+    const auraPulse = 0.5 + Math.sin(ticker.lastTime * 0.0042) * 0.5;
+    spiritGlowFx.outerStrength = 0.9 + auraPulse * 0.9 + movePulse * 0.45;
+    spiritGlowFx.innerStrength = 0.3 + auraPulse * 0.28;
     spirit.alpha =
       0.84 + beat * 0.06 + movePulse * 0.1 + bloomPulse * 0.08 + awakeningBoost * 0.08 + (hasAwakened ? 0.04 : 0);
     soul.scale.set(0.32 + beat * 0.035 + awakeningBoost * 0.04);
@@ -2516,8 +2531,12 @@ export async function mountGame(hostEl, options = {}) {
       }
       f.x = player.x + ox;
       f.y = player.y + oy;
-      f.rotation = Math.random() * Math.PI * 2;
-      f.scale.set((0.62 + Math.random() * 0.38) * 1.28);
+      f._baseRotation = Math.random() * Math.PI * 2;
+      f.rotation = f._baseRotation + (Math.random() - 0.5) * 0.25;
+      f._baseScale = (0.62 + Math.random() * 0.38) * 1.28;
+      f.scale.set(0.01);
+      f._popAge = 0;
+      f._popLife = 260;
       f.alpha = 0.88;
       f.blendMode = "normal";
       f._age = 0;
@@ -2540,7 +2559,16 @@ export async function mountGame(hostEl, options = {}) {
     for (let i = flowers.length - 1; i >= 0; i -= 1) {
       const f = flowers[i];
       f._age += ticker.deltaMS;
-      f.rotation += 0.0007 * ticker.deltaMS;
+      if (f._popAge < f._popLife) {
+        f._popAge += ticker.deltaMS;
+        const pt = Math.min(1, f._popAge / f._popLife);
+        const pop = pt < 0.62 ? pt / 0.62 : 1 - (pt - 0.62) / 0.38;
+        const boost = pt < 0.62 ? pop * 1.2 : 0.2 * Math.max(0, pop);
+        f.scale.set(f._baseScale * (pt + boost));
+      } else {
+        f.scale.set(f._baseScale);
+      }
+      f.rotation = f._baseRotation + Math.sin(f._age * 0.0022) * 0.08;
       const { lx, ly } = worldToLife(f.x, f.y);
       const mem = trailMemory[ly * LIFE_W + lx];
       if (helperPresenceCount > 1 && mem > 0.5) f.tint = 0xffe8f6;
