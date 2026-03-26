@@ -776,6 +776,8 @@ export async function mountGame(hostEl, options = {}) {
   bgNoiseFar.y = app.screen.height * 0.5;
   bgNoiseFar.alpha = 0.08;
   const bgTint = new PIXI.Graphics();
+  const backdropColorFx = new PIXI.ColorMatrixFilter();
+  backdropLayer.filters = [backdropColorFx];
   backdropLayer.addChild(bg);
   backdropLayer.addChild(bgNoiseFar);
   backdropLayer.addChild(bgNoiseNear);
@@ -825,6 +827,12 @@ export async function mountGame(hostEl, options = {}) {
   trailLayer.addChild(trailGfx);
   const trailGlowTex = makeSoftGlowTexture();
   const trailGlows = [];
+  const lureAura = new PIXI.Sprite(trailGlowTex);
+  lureAura.anchor.set(0.5);
+  lureAura.alpha = 0;
+  lureAura.scale.set(0.01);
+  lureAura.blendMode = "screen";
+  spiritLayer.addChild(lureAura);
   const flowerTextures = [
     makePainterlyFlowerTexture(0),
     makePainterlyFlowerTexture(1),
@@ -836,6 +844,7 @@ export async function mountGame(hostEl, options = {}) {
   const treeTextures = [makePainterlyTreeTexture(0), makePainterlyTreeTexture(1), makePainterlyTreeTexture(2)];
   const trees = [];
   const bloomBursts = [];
+  const bloomShockwaves = [];
 
   const essences = [];
   const boosterDrops = [];
@@ -1887,6 +1896,16 @@ export async function mountGame(hostEl, options = {}) {
     ring._life = 900;
     bloomBursts.push(ring);
     particleLayer.addChild(ring);
+    const shock = new PIXI.Graphics();
+    shock.circle(0, 0, 16).stroke({ width: 2, color: 0xffffff, alpha: 0.92 });
+    shock.x = x;
+    shock.y = y;
+    shock._age = 0;
+    shock._life = 500;
+    shock._baseScale = 0.45 + Math.min(0.4, power * 0.2);
+    shock._maxScale = 1.35 + Math.min(0.85, power * 0.38);
+    bloomShockwaves.push(shock);
+    particleLayer.addChild(shock);
     for (let i = 0; i < nHalos; i += 1) {
       const halo = new PIXI.Sprite(trailGlowTex);
       halo.anchor.set(0.5);
@@ -2734,6 +2753,18 @@ export async function mountGame(hostEl, options = {}) {
         lifeAuras.splice(i, 1);
       }
     }
+    for (let i = bloomShockwaves.length - 1; i >= 0; i -= 1) {
+      const s = bloomShockwaves[i];
+      s._age += ticker.deltaMS;
+      const t = Math.min(1, s._age / s._life);
+      const scale = s._baseScale + (s._maxScale - s._baseScale) * t;
+      s.scale.set(scale);
+      s.alpha = Math.max(0, 0.9 * (1 - t));
+      if (t >= 1) {
+        s.destroy();
+        bloomShockwaves.splice(i, 1);
+      }
+    }
 
     // Very slow optional decay — several minutes to drift from full; allows re-awakening below ~95%.
     // No decay in the last 1% before your first awakening (avoids "stuck at 99%" with tiny gains).
@@ -2900,6 +2931,9 @@ export async function mountGame(hostEl, options = {}) {
     bgNoiseNear.alpha = (0.06 + vit * 0.09 + (hasAwakened ? 0.04 : 0)) * airMotes;
     bgNoiseFar.alpha = (0.045 + vit * 0.065 + (hasAwakened ? 0.03 : 0)) * airMotes;
     lifeSprite.alpha = 0.32 + vit * 0.38 + (hasAwakened ? 0.06 : 0) + forgotten * 0.04;
+    backdropColorFx.reset();
+    backdropColorFx.saturate(0.86 + vit * 0.62, true);
+    backdropColorFx.brightness(0.93 + vit * 0.2 + (hasAwakened ? 0.05 : 0), true);
     weatherVeil.tint = weatherVisual.veilColor;
     weatherVeil.alpha = weatherVisual.veilAlpha;
     sunnyGlow.alpha = weatherVisual.sunAlpha;
@@ -2920,6 +2954,19 @@ export async function mountGame(hostEl, options = {}) {
     weatherLayer.visible = weatherVisual.rainAlpha > 0.02 || weatherVisual.windAlpha > 0.02 || weatherVisual.sunAlpha > 0.01;
     for (let i = 0; i < rainDrops.length; i += 1) {
       const d = rainDrops[i];
+      const playerScreenX = cx + (player.x - cam.x) * cam.zoom;
+      const playerScreenY = cy + (player.y - cam.y) * cam.zoom;
+      const rx = d.x - playerScreenX;
+      const ry = d.y - playerScreenY;
+      const rd = Math.hypot(rx, ry) || 1;
+      const influence = Math.max(0, 1 - rd / 170);
+      if (influence > 0.001) {
+        const awayX = rx / rd;
+        d.x += awayX * influence * (0.22 + moveSpeed * 0.15) * dt;
+        d.rotation = awayX * influence * 0.22;
+      } else {
+        d.rotation *= 0.85;
+      }
       d.x += d._vx * dt;
       d.y += d._vy * dt;
       d.alpha = 0.5 * weatherVisual.rainAlpha;
@@ -2940,6 +2987,11 @@ export async function mountGame(hostEl, options = {}) {
     if (surgeBoostMs > 0) surgeBoostMs -= ticker.deltaMS;
     if (lureActiveMs > 0) lureActiveMs -= ticker.deltaMS;
     if (lureActiveMs > 0) {
+      const lurePulse = 0.5 + Math.sin(ticker.lastTime * 0.0062) * 0.5;
+      lureAura.x = player.x;
+      lureAura.y = player.y;
+      lureAura.alpha = 0.16 + lurePulse * 0.26;
+      lureAura.scale.set(1.5 + lurePulse * 1.2);
       lureFxTimerMs -= ticker.deltaMS;
       if (lureFxTimerMs <= 0) {
         lureFxTimerMs = 260;
@@ -2955,6 +3007,31 @@ export async function mountGame(hostEl, options = {}) {
         bloomBursts.push(ring);
         particleLayer.addChild(ring);
       }
+      for (let i = 0; i < boosterDrops.length; i += 1) {
+        const b = boosterDrops[i];
+        if (b._type !== "surge") continue;
+        const dx = player.x - b.x;
+        const dy = player.y - b.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const pullZone = 320;
+        if (d > pullZone) continue;
+        const pull = (1 - d / pullZone) * 0.65 * dt;
+        b.x += (dx / d) * pull * 5;
+        b._baseY += (dy / d) * pull * 3;
+      }
+      for (let i = 0; i < ambientMotes.length; i += 1) {
+        const m = ambientMotes[i];
+        const dx = player.x - m.x;
+        const dy = player.y - m.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const pullZone = 280;
+        if (d > pullZone) continue;
+        const pull = (1 - d / pullZone) * 0.08 * dt;
+        m.x += (dx / d) * pull * 3.4;
+        m.y += (dy / d) * pull * 3.4;
+      }
+    } else {
+      lureAura.alpha *= 0.82;
     }
     if (surgeBoostMs > 0) {
       surgeFxTimerMs -= ticker.deltaMS;
