@@ -382,12 +382,31 @@ export async function mountExperience(hostEl) {
   const wardrobeRoot = new PIXI.Container();
   const modeSelectRoot = new PIXI.Container();
   const profileRoot = new PIXI.Container();
+  const buildVersionRaw =
+    import.meta.env.VITE_APP_VERSION ||
+    (typeof import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA === "string"
+      ? import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA.slice(0, 7)
+      : "") ||
+    "dev";
+  const versionLabel = new PIXI.Text({
+    text: `v${String(buildVersionRaw).replace(/^v/i, "")}`,
+    style: {
+      fontFamily: FONT_UI,
+      fontSize: 11,
+      fontWeight: "600",
+      fill: 0xe6f6ea,
+      letterSpacing: 0.02,
+    },
+  });
+  versionLabel.anchor.set(1, 1);
+  versionLabel.alpha = 0.56;
 
   app.stage.addChild(gameRoot);
   app.stage.addChild(welcomeRoot);
   app.stage.addChild(wardrobeRoot);
   app.stage.addChild(modeSelectRoot);
   app.stage.addChild(profileRoot);
+  app.stage.addChild(versionLabel);
 
   let active = "welcome";
 
@@ -1050,6 +1069,8 @@ export async function mountExperience(hostEl) {
     btnBack.container.y = h * 0.62;
     btnLogoutP.container.x = w * 0.5 - 100;
     btnLogoutP.container.y = h * 0.62 + 54;
+    versionLabel.x = w - 10;
+    versionLabel.y = h - 8;
     layoutWardrobe();
   }
 

@@ -9,12 +9,12 @@ export const SPIRIT_LOOK_COUNT = 6;
 
 /** @type {SpiritLookMeta[]} */
 export const SPIRIT_LOOKS = [
-  { id: 0, label: "Plain Seed", tagline: "Simple glow — the default path", poeticLine: "Light before a name", tier: "default" },
-  { id: 1, label: "Kitsune Ember", tagline: "Clever fox spirit of twilight", poeticLine: "A spark of quiet warmth", tier: "spirit" },
-  { id: 2, label: "Sage Owl", tagline: "Quiet wisdom from the canopy", poeticLine: "Sees what others miss", tier: "spirit" },
-  { id: 3, label: "Moon Hare", tagline: "Soft steps through silver grass", poeticLine: "Silver paths through grass", tier: "spirit" },
-  { id: 4, label: "Velvet Stag", tagline: "Antlers like branching dawn", poeticLine: "Dawn caught in antlers", tier: "spirit" },
-  { id: 5, label: "Lily Toad", tagline: "Cheerful guardian of the shallows", poeticLine: "Laughter in still water", tier: "spirit" },
+  { id: 0, label: "Seed", tagline: "Simple glow — the default path", poeticLine: "Light before a name", tier: "default" },
+  { id: 1, label: "Fox", tagline: "Clever fox spirit of twilight", poeticLine: "A spark of quiet warmth", tier: "spirit" },
+  { id: 2, label: "Owl", tagline: "Quiet wisdom from the canopy", poeticLine: "Sees what others miss", tier: "spirit" },
+  { id: 3, label: "Bunny", tagline: "Soft steps through silver grass", poeticLine: "Silver paths through grass", tier: "spirit" },
+  { id: 4, label: "Deer", tagline: "Antlers like branching dawn", poeticLine: "Dawn caught in antlers", tier: "spirit" },
+  { id: 5, label: "Frog", tagline: "Cheerful guardian of the shallows", poeticLine: "Laughter in still water", tier: "spirit" },
 ];
 
 /** Swatches for UI cards / picker rings. */
