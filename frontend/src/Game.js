@@ -1045,7 +1045,9 @@ export async function mountGame(hostEl, options = {}) {
         console.error("[Bloom Spirits] Failed to initialize world realtime auth", e);
       }
       myPresenceKey = presenceKey;
-      worldChannel = supabase.channel("room_1", { config: { presence: { enabled: true, key: presenceKey } } });
+      worldChannel = supabase.channel("room_1", {
+        config: { private: true, presence: { enabled: true, key: presenceKey } },
+      });
       worldChannel
         .on("presence", { event: "sync" }, syncRemoteSpiritsFromState)
         .on("system", {}, (payload) => {

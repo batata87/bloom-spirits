@@ -141,7 +141,7 @@ export function subscribeRestorationPresence(
     }
 
     ch = supabase.channel(topic, {
-      config: { presence: { enabled: true, key: authUserId } },
+      config: { private: true, presence: { enabled: true, key: authUserId } },
     });
 
     ch
