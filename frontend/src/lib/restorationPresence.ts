@@ -36,10 +36,6 @@ function roomConfig(): { mode: RoomMode; key: string } {
     if (mode === "private" && room) {
       return { mode, key: `private:${room.toLowerCase()}` };
     }
-    if (room) {
-      // Backward compatibility: `?room=...` without mode acts as private room.
-      return { mode: "private", key: `private:${room.toLowerCase()}` };
-    }
   } catch {
     // Ignore URL parsing issues and fallback to public room.
   }
@@ -61,13 +57,17 @@ export function helpersToMultiplier(helperCount: number): number {
 function extractPeers(presenceState: Record<string, unknown>): RestorationPresencePeer[] {
   const out: RestorationPresencePeer[] = [];
   for (const key of Object.keys(presenceState)) {
-    const entries = presenceState[key];
-    if (!Array.isArray(entries)) continue;
+    const raw = presenceState[key] as { metas?: unknown[] } | unknown;
+    const entries = Array.isArray(raw) ? raw : Array.isArray(raw?.metas) ? raw.metas : [];
+    if (!entries.length) continue;
     for (const entry of entries) {
       if (!entry || typeof entry !== "object") continue;
       const pres = (entry as { presence?: Record<string, unknown> }).presence;
-      if (pres && typeof pres.name === "string" && pres.name.length > 0) {
-        out.push({ name: pres.name });
+      const name =
+        (pres && typeof pres.name === "string" && pres.name.length > 0 && pres.name) ||
+        (typeof (entry as { name?: unknown }).name === "string" ? ((entry as { name: string }).name || "") : "");
+      if (name) {
+        out.push({ name });
       }
     }
   }
