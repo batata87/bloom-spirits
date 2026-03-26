@@ -1229,9 +1229,18 @@ export async function mountExperience(hostEl) {
   }
 
   welcomeRoot.alpha = 0;
+  let authBootstrapped = false;
+  const bootFallbackTimer = window.setTimeout(() => {
+    if (authBootstrapped) return;
+    welcomeRoot.alpha = 1;
+    layoutFlowScreens();
+    showScreen("welcome");
+  }, 1800);
 
   const unsubAuth = subscribeAuth(async (event, session) => {
     if (event === "INITIAL_SESSION") {
+      authBootstrapped = true;
+      window.clearTimeout(bootFallbackTimer);
       if (session?.user) {
         try {
           await setAccountMode(session.user);
@@ -1275,6 +1284,8 @@ export async function mountExperience(hostEl) {
   });
 
   if (!isSupabaseConfigured) {
+    authBootstrapped = true;
+    window.clearTimeout(bootFallbackTimer);
     welcomeRoot.alpha = 1;
     layoutFlowScreens();
     showScreen("welcome");
@@ -1295,6 +1306,7 @@ export async function mountExperience(hostEl) {
     app.ticker.remove(tickWelcomeAtmosphere);
     welcomeRoot.removeAllListeners("pointermove");
     window.removeEventListener("keydown", onEscapeWardrobe);
+    window.clearTimeout(bootFallbackTimer);
     unsubAuth();
     app.renderer.off("resize", layoutFlowScreens);
     for (let i = 0; i < welcomeFlowerTextures.length; i += 1) welcomeFlowerTextures[i].destroy(true);
