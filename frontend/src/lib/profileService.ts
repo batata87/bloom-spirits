@@ -3,7 +3,7 @@ import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
 export type ProfileRow = {
   id: string;
-  life_essence: number;
+  magical_creatures: number;
   inventory: string[];
 };
 
@@ -15,28 +15,48 @@ export async function ensureAndLoadProfile(user: User): Promise<ProfileRow> {
   assertConfigured();
   const { data: existing, error: selErr } = await getSupabase()
     .from("profiles")
-    .select("id, life_essence, inventory")
+    .select("id, magical_creatures, inventory")
     .eq("id", user.id)
     .maybeSingle();
   if (selErr) throw selErr;
   if (existing) {
     return {
       id: existing.id,
-      life_essence: Number(existing.life_essence) || 0,
+      magical_creatures: Number(existing.magical_creatures) || 0,
       inventory: Array.isArray(existing.inventory) ? existing.inventory : ["basic_spirit"],
     };
   }
 
   const { data: inserted, error: insErr } = await getSupabase()
     .from("profiles")
-    .insert({ id: user.id, life_essence: 0, inventory: ["basic_spirit"] })
-    .select("id, life_essence, inventory")
+    .insert({ id: user.id, magical_creatures: 0, inventory: ["basic_spirit"] })
+    .select("id, magical_creatures, inventory")
     .single();
   if (insErr) throw insErr;
 
   return {
     id: inserted.id,
-    life_essence: Number(inserted.life_essence) || 0,
+    magical_creatures: Number(inserted.magical_creatures) || 0,
     inventory: Array.isArray(inserted.inventory) ? inserted.inventory : ["basic_spirit"],
   };
+}
+
+export async function loadProfile(userId: string): Promise<ProfileRow> {
+  assertConfigured();
+  const { data, error } = await getSupabase()
+    .from("profiles")
+    .select("id, magical_creatures, inventory")
+    .eq("id", userId)
+    .single();
+  if (error) throw error;
+  return {
+    id: data.id,
+    magical_creatures: Number(data.magical_creatures) || 0,
+    inventory: Array.isArray(data.inventory) ? data.inventory : ["basic_spirit"],
+  };
+}
+
+export async function purchaseWithCreatures(itemId: string) {
+  assertConfigured();
+  return getSupabase().rpc("purchase_with_creatures", { item_id_param: itemId });
 }

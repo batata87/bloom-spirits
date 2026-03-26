@@ -8,6 +8,7 @@ import {
   normalizeSpiritLook,
 } from "../Game.js";
 import { createSpiritWardrobeScene } from "./spiritWardrobeScene.js";
+import { StoreUI } from "./storeUI.js";
 import {
   loadPlayer,
   loadStats,
@@ -22,8 +23,8 @@ import {
   setAccountMode,
   getStorageMode,
 } from "../session/playerStore.js";
-import { login, logout, signInWithGoogle, subscribeAuth } from "../lib/auth.ts";
-import { ensureAndLoadProfile } from "../lib/profileService.ts";
+import { login, loginWithEmail, logout, subscribeAuth } from "../lib/auth.ts";
+import { ensureAndLoadProfile, loadProfile, purchaseWithCreatures } from "../lib/profileService.ts";
 import { isSupabaseConfigured } from "../lib/supabaseClient.ts";
 import { playSoftClick } from "../ui/softClick.js";
 
@@ -383,6 +384,7 @@ export async function mountExperience(hostEl) {
   const wardrobeRoot = new PIXI.Container();
   const modeSelectRoot = new PIXI.Container();
   const profileRoot = new PIXI.Container();
+  const storeRoot = new PIXI.Container();
   const accountTopBar = new PIXI.Container();
   const accountTopBarBg = new PIXI.Graphics();
   const accountTopBarText = new PIXI.Text({
@@ -393,6 +395,8 @@ export async function mountExperience(hostEl) {
   accountTopBar.addChild(accountTopBarBg);
   accountTopBar.addChild(accountTopBarText);
   accountTopBar.visible = false;
+  const btnStore = makeRoundedButton("Store", 96, 32);
+  btnStore.container.visible = false;
   const buildVersionRaw =
     import.meta.env.VITE_APP_VERSION ||
     (typeof import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA === "string"
@@ -417,12 +421,15 @@ export async function mountExperience(hostEl) {
   app.stage.addChild(wardrobeRoot);
   app.stage.addChild(modeSelectRoot);
   app.stage.addChild(profileRoot);
+  app.stage.addChild(storeRoot);
   app.stage.addChild(accountTopBar);
+  app.stage.addChild(btnStore.container);
   app.stage.addChild(versionLabel);
 
   let active = "welcome";
-  /** @type {{ life_essence: number, inventory: string[] } | null} */
+  /** @type {{ magical_creatures: number, inventory: string[] } | null} */
   let accountProfile = null;
+  let accountUserId = null;
 
   const makeGuestName = () => `Guest-${1000 + Math.floor(Math.random() * 9000)}`;
   const isGenericGuestName = (name) => /^(guest|guest[-_ ]?\d*)$/i.test((name || "").trim());
@@ -499,7 +506,9 @@ export async function mountExperience(hostEl) {
     refreshWardrobeSelection();
     gameApi.setPlayerLabel(guest?.name ?? "Guest");
     accountProfile = null;
+    accountUserId = null;
     accountTopBar.visible = false;
+    btnStore.container.visible = false;
     gameApi.setPaused(true);
     gameRoot.alpha = 0;
     gameRoot.visible = false;
@@ -521,7 +530,7 @@ export async function mountExperience(hostEl) {
       return;
     }
     accountTopBar.visible = true;
-    accountTopBarText.text = `Life Essence ${Math.floor(accountProfile.life_essence || 0)}`;
+    accountTopBarText.text = `Magical Creatures ${Math.floor(accountProfile.magical_creatures || 0)}`;
     const padX = 10;
     const padY = 6;
     const w = accountTopBarText.width + padX * 2;
@@ -539,8 +548,41 @@ export async function mountExperience(hostEl) {
     const loggedIn = getStorageMode() === "account";
     btnLogin.container.visible = !loggedIn && isSupabaseConfigured;
     btnGoogle.container.visible = !loggedIn && isSupabaseConfigured;
+    btnStore.container.visible = loggedIn;
     refreshAccountTopBar();
   }
+
+  const storeUi = new StoreUI(app, {
+    fontUi: FONT_UI,
+    onClose: () => {},
+    onBuyCreature: async (itemId) => {
+      try {
+        await purchaseWithCreatures(itemId);
+        if (accountUserId) {
+          accountProfile = await loadProfile(accountUserId);
+          storeUi.setProfile(accountProfile);
+          refreshAccountTopBar();
+          storeUi.setStatus("Purchased successfully.", 0xcff7d6);
+        } else {
+          storeUi.setStatus("Signed-in user not found.", 0xffd1d1);
+        }
+      } catch (e) {
+        console.error("[Bloom Spirits] Creature purchase failed", e);
+        storeUi.setStatus("Purchase failed. Need more magical creatures?", 0xffd1d1);
+      }
+    },
+    onBuyUsd: async () => {
+      console.log("Redirecting to Stripe...");
+      storeUi.setStatus("Redirecting to Stripe...", 0xcde4ff);
+    },
+  });
+  storeRoot.addChild(storeUi.root);
+  btnStore.container.on("pointerdown", () => {
+    playSoftClick();
+    storeUi.setProfile(accountProfile);
+    storeUi.setStatus("");
+    storeUi.open();
+  });
 
   // —— Welcome ——
   const wBgTex = createBackgroundTexture(app.screen.width * 1.5, app.screen.height * 1.5);
@@ -1120,6 +1162,9 @@ export async function mountExperience(hostEl) {
     versionLabel.y = h - 8;
     accountTopBar.x = w - 14 - accountTopBar.width;
     accountTopBar.y = 12;
+    btnStore.container.x = w - 14 - 96;
+    btnStore.container.y = 46;
+    storeUi.layout();
     layoutWardrobe();
   }
 
@@ -1216,7 +1261,7 @@ export async function mountExperience(hostEl) {
   });
   btnGoogle.container.on("pointerdown", async () => {
     playSoftClick();
-    const { error } = await signInWithGoogle();
+    const { error } = await login();
     if (error) {
       console.error("[Bloom Spirits] Google sign-in failed", error);
     }
@@ -1255,7 +1300,7 @@ export async function mountExperience(hostEl) {
       return;
     }
     hintEl.hidden = true;
-    const { error } = await login(email);
+    const { error } = await loginWithEmail(email);
     if (error) {
       hintEl.textContent = "That didn't work. Try again in a moment.";
       hintEl.hidden = false;
@@ -1300,6 +1345,7 @@ export async function mountExperience(hostEl) {
       if (session?.user) {
         try {
           await setAccountMode(session.user);
+          accountUserId = session.user.id;
           accountProfile = await ensureAndLoadProfile(session.user);
           selectedSpiritLook = normalizeSpiritLook(loadPlayer()?.spiritLook);
           gameApi.setSpiritLook(selectedSpiritLook);
@@ -1328,6 +1374,7 @@ export async function mountExperience(hostEl) {
     if (event === "SIGNED_IN" && session?.user) {
       try {
         await setAccountMode(session.user);
+        accountUserId = session.user.id;
         accountProfile = await ensureAndLoadProfile(session.user);
         selectedSpiritLook = normalizeSpiritLook(loadPlayer()?.spiritLook);
         gameApi.setSpiritLook(selectedSpiritLook);
@@ -1342,6 +1389,7 @@ export async function mountExperience(hostEl) {
     }
     if (event === "SIGNED_OUT") {
       accountProfile = null;
+      accountUserId = null;
       refreshAuthButtons();
       resetToWelcome();
     }

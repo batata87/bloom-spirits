@@ -1,17 +1,7 @@
 import type { AuthChangeEvent, Session } from "@supabase/supabase-js";
 import { getSupabase, isSupabaseConfigured } from "./supabaseClient";
 
-export async function login(email: string) {
-  if (!isSupabaseConfigured) {
-    return { data: null, error: new Error("Supabase is not configured") };
-  }
-  return getSupabase().auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
-  });
-}
-
-export async function signInWithGoogle() {
+export async function login() {
   if (!isSupabaseConfigured) {
     return { data: null, error: new Error("Supabase is not configured") };
   }
@@ -22,6 +12,18 @@ export async function signInWithGoogle() {
     options: { redirectTo },
   });
 }
+
+export async function loginWithEmail(email: string) {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: new Error("Supabase is not configured") };
+  }
+  return getSupabase().auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: typeof window !== "undefined" ? window.location.origin : undefined },
+  });
+}
+
+export const signInWithGoogle = login;
 
 export async function logout() {
   if (!isSupabaseConfigured) return;
