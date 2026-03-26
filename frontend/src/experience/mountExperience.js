@@ -370,11 +370,13 @@ function makeModeCard(mode, onPlay) {
  */
 export async function mountExperience(hostEl) {
   const app = new PIXI.Application();
+  const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
   await app.init({
     resizeTo: hostEl,
     background: "#19382a",
     antialias: true,
     autoDensity: true,
+    resolution: dpr,
   });
   app.ticker.maxFPS = 30;
   hostEl.appendChild(app.canvas);

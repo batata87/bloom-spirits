@@ -643,6 +643,12 @@ function createSoundManager() {
       audioCtx.resume().catch(() => {});
     }
   };
+  const pauseAmbient = () => {
+    ambient.pause();
+    if (audioCtx && audioCtx.state === "running") {
+      audioCtx.suspend().catch(() => {});
+    }
+  };
 
   const setAmbientVolumeTarget = (v) => {
     ambientVolTarget = Math.max(0, Math.min(1, v));
@@ -678,6 +684,7 @@ function createSoundManager() {
 
   return {
     playAmbient,
+    pauseAmbient,
     playEffect,
     setAmbientVolumeTarget,
     tickAmbientVolume,
@@ -718,15 +725,20 @@ export async function mountGame(hostEl, options = {}) {
 
   const app = injectedApp ?? new PIXI.Application();
   if (!injectedApp) {
+    const dpr = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
     await app.init({
       resizeTo: hostEl,
       background: "#19382a",
       antialias: true,
       autoDensity: true,
+      resolution: dpr,
     });
     app.ticker.maxFPS = 30;
     hostEl.appendChild(app.canvas);
   }
+  app.renderer.roundPixels = true;
+  app.canvas.style.touchAction = "none";
+  PIXI.Text.defaultResolution = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 
   const stage = app.stage;
   const root = gameParent ?? stage;
@@ -866,6 +878,8 @@ export async function mountGame(hostEl, options = {}) {
   const lifeAuras = [];
 
   const pointer = { x: app.screen.width * 0.5, y: app.screen.height * 0.5 };
+  let touchDragging = false;
+  const isCoarseInput = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)")?.matches;
   const keys = new Set();
   let boostHeld = false;
   const velocity = { x: 0, y: 0 };
@@ -874,6 +888,7 @@ export async function mountGame(hostEl, options = {}) {
   let hintOverrideMs = 0;
   let helpPanelOpen = false;
   let menuOpen = false;
+  let boosterBaseScale = 1;
 
   const weather = { kind: "sunny", timer: 65000 };
   /** Global tuning: lower = slower restoration (all sources scale here). */
@@ -1336,7 +1351,7 @@ export async function mountGame(hostEl, options = {}) {
     wrap.addChild(timerFill);
     wrap.eventMode = "static";
     wrap.cursor = "pointer";
-    wrap.hitArea = new PIXI.Rectangle(0, 0, boosterD, boosterD + 34);
+    wrap.hitArea = new PIXI.Rectangle(-8, -8, boosterD + 16, boosterD + 50);
     let enabled = true;
     let active = false;
     const phase = Math.random() * Math.PI * 2;
@@ -1472,10 +1487,11 @@ export async function mountGame(hostEl, options = {}) {
 
   const layoutUI = () => {
     const h = HUD_SHIFT_Y;
-    const topY = 10 + h;
+    const isMobileUi = app.screen.width <= 820 || app.screen.height <= 620;
+    const topY = (isMobileUi ? 6 : 10) + h;
     const pad = 10;
-    const lbW = Math.min(228, Math.floor(app.screen.width * 0.48));
-    const LB_H = 192;
+    const lbW = isMobileUi ? Math.min(176, Math.floor(app.screen.width * 0.44)) : Math.min(228, Math.floor(app.screen.width * 0.48));
+    const LB_H = isMobileUi ? 150 : 192;
     leaderboardHeader.x = pad + 12;
     leaderboardHeader.y = topY;
     leaderboardSub.x = pad + 12;
@@ -1494,8 +1510,8 @@ export async function mountGame(hostEl, options = {}) {
     menuBtn.y = topY;
     feedbackQuickBtn.x = menuX - 102;
     feedbackQuickBtn.y = topY + 6;
-    const currencyW = 140;
-    const currencyH = 40;
+    const currencyW = isMobileUi ? 126 : 140;
+    const currencyH = isMobileUi ? 36 : 40;
     const currencyX = app.screen.width - marginR - currencyW;
     const currencyY = topY + hb + 8;
     currencyBg.clear();
@@ -1505,7 +1521,7 @@ export async function mountGame(hostEl, options = {}) {
     currencyBg.y = currencyY;
     currencyIcon.x = currencyX + 18;
     currencyIcon.y = currencyY + currencyH * 0.5;
-    currencyIcon.scale.set(0.23);
+    currencyIcon.scale.set(isMobileUi ? 0.2 : 0.23);
     currencyIcon.alpha = 0.98;
     currencyLabel.x = currencyX + 34;
     currencyLabel.y = currencyY + 5;
@@ -1525,7 +1541,7 @@ export async function mountGame(hostEl, options = {}) {
     surprisesValue.x = currencyX + 34;
     surprisesValue.y = surprisesY + 17;
 
-    const s = Math.min(118, Math.max(88, Math.floor(app.screen.height * 0.19)));
+    const s = isMobileUi ? Math.min(96, Math.max(74, Math.floor(app.screen.height * 0.16))) : Math.min(118, Math.max(88, Math.floor(app.screen.height * 0.19)));
     const miniMapX = app.screen.width - marginR - s;
     const miniMapY = surprisesY + currencyH + 12;
     miniMap.x = miniMapX;
@@ -1539,14 +1555,15 @@ export async function mountGame(hostEl, options = {}) {
     const gap = 10;
     const totalW = 3 * boosterD + 2 * gap;
     const startX = (app.screen.width - totalW) * 0.5;
-    const baseBottom = app.screen.height - 30;
+    const baseBottom = app.screen.height - (isMobileUi ? 16 : 30);
     boosterLure.wrap.x = startX;
     boosterSurge.wrap.x = startX + boosterD + gap;
     boosterSight.wrap.x = startX + 2 * (boosterD + gap);
     const arc = 8;
-    boosterLure.wrap.y = baseBottom - boosterD - 12 + arc * 0.45;
-    boosterSurge.wrap.y = baseBottom - boosterD - 12 - arc;
-    boosterSight.wrap.y = baseBottom - boosterD - 12 + arc * 0.45;
+    boosterLure.wrap.y = baseBottom - boosterD - (isMobileUi ? 4 : 12) + arc * 0.45;
+    boosterSurge.wrap.y = baseBottom - boosterD - (isMobileUi ? 4 : 12) - arc;
+    boosterSight.wrap.y = baseBottom - boosterD - (isMobileUi ? 4 : 12) + arc * 0.45;
+    boosterBaseScale = isMobileUi ? 1.16 : 1;
     layoutMenuUI();
     toastText.style.wordWrapWidth = Math.min(560, app.screen.width - 36);
     toastText.x = app.screen.width * 0.5;
@@ -1554,7 +1571,7 @@ export async function mountGame(hostEl, options = {}) {
     toastText.y = Math.max(72 + h, boosterTopY - 54);
     if (helpPanelOpen) layoutHelpOverlay();
 
-    const barW = Math.min(280, Math.max(120, app.screen.width - lbW - 132 - 28));
+    const barW = isMobileUi ? Math.min(220, Math.max(100, app.screen.width - lbW - 118 - 20)) : Math.min(280, Math.max(120, app.screen.width - lbW - 132 - 28));
     const barH = 10;
     const bx = app.screen.width * 0.5 - barW * 0.5;
     const by = 14 + h;
@@ -1585,6 +1602,22 @@ export async function mountGame(hostEl, options = {}) {
   stage.eventMode = "static";
   stage.hitArea = app.screen;
   stage.on("pointermove", syncPointer);
+  stage.on("pointerdown", (e) => {
+    if (e.pointerType === "touch") {
+      touchDragging = true;
+      syncPointer(e);
+    }
+  });
+  stage.on("pointerup", () => {
+    touchDragging = false;
+    pointer.x = app.screen.width * 0.5;
+    pointer.y = app.screen.height * 0.5;
+  });
+  stage.on("pointerupoutside", () => {
+    touchDragging = false;
+    pointer.x = app.screen.width * 0.5;
+    pointer.y = app.screen.height * 0.5;
+  });
   const onCanvasPointerMove = (ev) => syncPointerFromClient(ev.clientX, ev.clientY);
   app.canvas.addEventListener("pointermove", onCanvasPointerMove);
 
@@ -1627,6 +1660,26 @@ export async function mountGame(hostEl, options = {}) {
   };
   window.addEventListener("mousedown", onMouseDown);
   window.addEventListener("mouseup", onMouseUp);
+  const onVisibilityChange = () => {
+    if (document.hidden) {
+      sounds.pauseAmbient();
+      boostHeld = false;
+      touchDragging = false;
+    } else {
+      if (!gamePaused) sounds.playAmbient();
+    }
+  };
+  const onWindowBlur = () => {
+    sounds.pauseAmbient();
+    boostHeld = false;
+    touchDragging = false;
+  };
+  const onWindowFocus = () => {
+    if (!gamePaused) sounds.playAmbient();
+  };
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  window.addEventListener("blur", onWindowBlur);
+  window.addEventListener("focus", onWindowFocus);
 
   const rainDrops = [];
   const weatherVeil = new PIXI.Graphics();
@@ -2278,6 +2331,11 @@ export async function mountGame(hostEl, options = {}) {
       inputY /= len;
       inputMag = 1;
     } else {
+      if (isCoarseInput && !touchDragging) {
+        inputX = 0;
+        inputY = 0;
+        inputMag = 0;
+      } else {
       // Steer toward world position under the cursor (not screen-center stick — feels responsive with camera).
       const twx = cam.x + (pointer.x - cx) / cam.zoom;
       const twy = cam.y + (pointer.y - cy) / cam.zoom;
@@ -2294,6 +2352,7 @@ export async function mountGame(hostEl, options = {}) {
         inputX = dx / dist;
         inputY = dy / dist;
         inputMag = Math.min(1, (dist - deadzone) / ramp);
+      }
       }
     }
 
@@ -3090,9 +3149,9 @@ export async function mountGame(hostEl, options = {}) {
     const lurePulse = lurePulseMs > 0 ? Math.sin((1 - lurePulseMs / 700) * Math.PI) * 0.16 : 0;
     const surgePulse = surgePulseMs > 0 ? Math.sin((1 - surgePulseMs / 760) * Math.PI) * 0.2 : 0;
     const sightPulse = sightPulseMs > 0 ? Math.sin((1 - sightPulseMs / 680) * Math.PI) * 0.14 : 0;
-    boosterLure.wrap.scale.set((lureActiveMs > 0 ? 1.06 : 1) + lurePulse);
-    boosterSurge.wrap.scale.set((surgeBoostMs > 0 ? 1.08 : 1) + surgePulse);
-    boosterSight.wrap.scale.set(1 + sightPulse);
+    boosterLure.wrap.scale.set(boosterBaseScale * ((lureActiveMs > 0 ? 1.06 : 1) + lurePulse));
+    boosterSurge.wrap.scale.set(boosterBaseScale * ((surgeBoostMs > 0 ? 1.08 : 1) + surgePulse));
+    boosterSight.wrap.scale.set(boosterBaseScale * (1 + sightPulse));
     boosterLure.setTimerProgress(lureActiveMs / LURE_DURATION_MS);
     boosterSurge.setTimerProgress(surgeBoostMs / SURGE_DURATION_MS);
     boosterSight.setTimerProgress(0);
@@ -3174,6 +3233,9 @@ export async function mountGame(hostEl, options = {}) {
     window.removeEventListener("keyup", onKeyUp);
     window.removeEventListener("mousedown", onMouseDown);
     window.removeEventListener("mouseup", onMouseUp);
+    document.removeEventListener("visibilitychange", onVisibilityChange);
+    window.removeEventListener("blur", onWindowBlur);
+    window.removeEventListener("focus", onWindowFocus);
     flowers.forEach((f) => f.destroy());
     trees.forEach((t) => t.destroy());
     trailGlows.forEach((g) => g.destroy());
