@@ -397,6 +397,8 @@ export async function mountExperience(hostEl) {
   accountTopBar.visible = false;
   const btnStore = makeRoundedButton("Store", 96, 32);
   btnStore.container.visible = false;
+  const btnProfileQuick = makeRoundedButton("Profile", 96, 32);
+  btnProfileQuick.container.visible = true;
   const gitShaRaw = typeof import.meta.env.VITE_GIT_SHA === "string" ? import.meta.env.VITE_GIT_SHA : "";
   const appVersionRaw = typeof import.meta.env.VITE_APP_VERSION === "string" ? import.meta.env.VITE_APP_VERSION : "";
   const buildVersionRaw =
@@ -424,6 +426,7 @@ export async function mountExperience(hostEl) {
   app.stage.addChild(storeRoot);
   app.stage.addChild(accountTopBar);
   app.stage.addChild(btnStore.container);
+  app.stage.addChild(btnProfileQuick.container);
   app.stage.addChild(versionLabel);
 
   let active = "welcome";
@@ -549,6 +552,7 @@ export async function mountExperience(hostEl) {
     btnLogin.container.visible = !loggedIn;
     btnGoogle.container.visible = !loggedIn;
     btnStore.container.visible = loggedIn;
+    btnProfileQuick.container.visible = true;
     refreshAccountTopBar();
   }
 
@@ -582,6 +586,10 @@ export async function mountExperience(hostEl) {
     storeUi.setProfile(accountProfile);
     storeUi.setStatus("");
     storeUi.open();
+  });
+  btnProfileQuick.container.on("pointerdown", () => {
+    playSoftClick();
+    showScreen("profile");
   });
 
   // —— Welcome ——
@@ -1165,6 +1173,8 @@ export async function mountExperience(hostEl) {
     accountTopBar.y = 12;
     btnStore.container.x = w - 14 - 96;
     btnStore.container.y = 46;
+    btnProfileQuick.container.x = w - 14 - 96;
+    btnProfileQuick.container.y = 84;
     storeUi.layout();
     layoutWardrobe();
   }
