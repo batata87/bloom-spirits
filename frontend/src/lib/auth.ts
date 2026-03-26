@@ -11,6 +11,18 @@ export async function login(email: string) {
   });
 }
 
+export async function signInWithGoogle() {
+  if (!isSupabaseConfigured) {
+    return { data: null, error: new Error("Supabase is not configured") };
+  }
+  const redirectTo =
+    typeof window !== "undefined" ? `${window.location.origin}${window.location.pathname}` : undefined;
+  return getSupabase().auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo },
+  });
+}
+
 export async function logout() {
   if (!isSupabaseConfigured) return;
   await getSupabase().auth.signOut();

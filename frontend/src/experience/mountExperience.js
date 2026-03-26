@@ -22,7 +22,8 @@ import {
   setAccountMode,
   getStorageMode,
 } from "../session/playerStore.js";
-import { login, logout, subscribeAuth } from "../lib/auth.ts";
+import { login, logout, signInWithGoogle, subscribeAuth } from "../lib/auth.ts";
+import { ensureAndLoadProfile } from "../lib/profileService.ts";
 import { isSupabaseConfigured } from "../lib/supabaseClient.ts";
 import { playSoftClick } from "../ui/softClick.js";
 
@@ -382,6 +383,16 @@ export async function mountExperience(hostEl) {
   const wardrobeRoot = new PIXI.Container();
   const modeSelectRoot = new PIXI.Container();
   const profileRoot = new PIXI.Container();
+  const accountTopBar = new PIXI.Container();
+  const accountTopBarBg = new PIXI.Graphics();
+  const accountTopBarText = new PIXI.Text({
+    text: "",
+    style: { fontFamily: FONT_UI, fontSize: 12, fontWeight: "700", fill: 0xeafff0 },
+  });
+  accountTopBarText.anchor.set(1, 0.5);
+  accountTopBar.addChild(accountTopBarBg);
+  accountTopBar.addChild(accountTopBarText);
+  accountTopBar.visible = false;
   const buildVersionRaw =
     import.meta.env.VITE_APP_VERSION ||
     (typeof import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA === "string"
@@ -406,9 +417,12 @@ export async function mountExperience(hostEl) {
   app.stage.addChild(wardrobeRoot);
   app.stage.addChild(modeSelectRoot);
   app.stage.addChild(profileRoot);
+  app.stage.addChild(accountTopBar);
   app.stage.addChild(versionLabel);
 
   let active = "welcome";
+  /** @type {{ life_essence: number, inventory: string[] } | null} */
+  let accountProfile = null;
 
   const makeGuestName = () => `Guest-${1000 + Math.floor(Math.random() * 9000)}`;
   const isGenericGuestName = (name) => /^(guest|guest[-_ ]?\d*)$/i.test((name || "").trim());
@@ -484,6 +498,8 @@ export async function mountExperience(hostEl) {
     refreshWelcomeProfile();
     refreshWardrobeSelection();
     gameApi.setPlayerLabel(guest?.name ?? "Guest");
+    accountProfile = null;
+    accountTopBar.visible = false;
     gameApi.setPaused(true);
     gameRoot.alpha = 0;
     gameRoot.visible = false;
@@ -497,6 +513,33 @@ export async function mountExperience(hostEl) {
       return;
     }
     resetToWelcome();
+  }
+
+  function refreshAccountTopBar() {
+    if (!accountProfile) {
+      accountTopBar.visible = false;
+      return;
+    }
+    accountTopBar.visible = true;
+    accountTopBarText.text = `Life Essence ${Math.floor(accountProfile.life_essence || 0)}`;
+    const padX = 10;
+    const padY = 6;
+    const w = accountTopBarText.width + padX * 2;
+    const h = 26;
+    accountTopBarBg.clear();
+    accountTopBarBg.roundRect(0, 0, w, h, 10).fill({ color: 0x0e2218, alpha: 0.8 });
+    accountTopBarBg.roundRect(0, 0, w, h, 10).stroke({ width: 1, color: 0x9dd8b2, alpha: 0.35 });
+    accountTopBarText.x = w - padX;
+    accountTopBarText.y = h * 0.5;
+    accountTopBar.x = app.screen.width - 14 - w;
+    accountTopBar.y = 12;
+  }
+
+  function refreshAuthButtons() {
+    const loggedIn = getStorageMode() === "account";
+    btnLogin.container.visible = !loggedIn && isSupabaseConfigured;
+    btnGoogle.container.visible = !loggedIn && isSupabaseConfigured;
+    refreshAccountTopBar();
   }
 
   // —— Welcome ——
@@ -640,6 +683,7 @@ export async function mountExperience(hostEl) {
     gsap.to(btnEnter.container.scale, { x: 1, y: 1, duration: 0.22, ease: "power2.out" });
   });
   const btnLogin = makeRoundedButton("Continue with email", 260, 44);
+  const btnGoogle = makeRoundedButton("Login with Google", 260, 44);
   const welcomeHintSeen = window.localStorage?.getItem("bloom_welcome_hint_seen") === "1";
   let showWelcomeMoveHint = !welcomeHintSeen;
   if (!showWelcomeMoveHint) welcomeMoveHint.visible = false;
@@ -773,6 +817,7 @@ export async function mountExperience(hostEl) {
   welcomeRoot.addChild(btnEnterWrap);
   welcomeRoot.addChild(welcomeMoveHint);
   welcomeRoot.addChild(btnLogin.container);
+  welcomeRoot.addChild(btnGoogle.container);
 
   if (!isSupabaseConfigured) {
     btnLogin.container.visible = false;
@@ -1044,7 +1089,9 @@ export async function mountExperience(hostEl) {
     welcomeMoveHint.y = ctaY + 90;
     welcomeMoveHint.visible = false;
     btnLogin.container.x = w * 0.5 - 130;
-    btnLogin.container.y = Math.min(h - 50, welcomeMoveHint.y + 28);
+    btnLogin.container.y = Math.min(h - 88, welcomeMoveHint.y + 28);
+    btnGoogle.container.x = w * 0.5 - 130;
+    btnGoogle.container.y = Math.min(h - 40, btnLogin.container.y + 50);
     initWelcomeSpores(w, h);
     initWelcomeFlowers(w, h);
 
@@ -1071,6 +1118,8 @@ export async function mountExperience(hostEl) {
     btnLogoutP.container.y = h * 0.62 + 54;
     versionLabel.x = w - 10;
     versionLabel.y = h - 8;
+    accountTopBar.x = w - 14 - accountTopBar.width;
+    accountTopBar.y = 12;
     layoutWardrobe();
   }
 
@@ -1165,6 +1214,13 @@ export async function mountExperience(hostEl) {
     playSoftClick();
     openLoginModal();
   });
+  btnGoogle.container.on("pointerdown", async () => {
+    playSoftClick();
+    const { error } = await signInWithGoogle();
+    if (error) {
+      console.error("[Bloom Spirits] Google sign-in failed", error);
+    }
+  });
 
   btnBack.container.on("pointerdown", () => {
     playSoftClick();
@@ -1244,10 +1300,12 @@ export async function mountExperience(hostEl) {
       if (session?.user) {
         try {
           await setAccountMode(session.user);
+          accountProfile = await ensureAndLoadProfile(session.user);
           selectedSpiritLook = normalizeSpiritLook(loadPlayer()?.spiritLook);
           gameApi.setSpiritLook(selectedSpiritLook);
           refreshWardrobeSelection();
           gameApi.setPlayerLabel(loadPlayer()?.name ?? "Spirit");
+          refreshAuthButtons();
           welcomeRoot.visible = false;
           welcomeRoot.alpha = 0;
           layoutFlowScreens();
@@ -1259,6 +1317,8 @@ export async function mountExperience(hostEl) {
           showScreen("welcome");
         }
       } else {
+        accountProfile = null;
+        refreshAuthButtons();
         welcomeRoot.alpha = 1;
         layoutFlowScreens();
         showScreen("welcome");
@@ -1268,10 +1328,12 @@ export async function mountExperience(hostEl) {
     if (event === "SIGNED_IN" && session?.user) {
       try {
         await setAccountMode(session.user);
+        accountProfile = await ensureAndLoadProfile(session.user);
         selectedSpiritLook = normalizeSpiritLook(loadPlayer()?.spiritLook);
         gameApi.setSpiritLook(selectedSpiritLook);
         refreshWardrobeSelection();
         gameApi.setPlayerLabel(loadPlayer()?.name ?? "Spirit");
+        refreshAuthButtons();
         modal.classList.remove("visible");
         openModeSelect();
       } catch (e) {
@@ -1279,6 +1341,8 @@ export async function mountExperience(hostEl) {
       }
     }
     if (event === "SIGNED_OUT") {
+      accountProfile = null;
+      refreshAuthButtons();
       resetToWelcome();
     }
   });
@@ -1290,6 +1354,7 @@ export async function mountExperience(hostEl) {
     layoutFlowScreens();
     showScreen("welcome");
   }
+  refreshAuthButtons();
 
   function onEscapeWardrobe(e) {
     if (e.key !== "Escape" || active !== "wardrobe") return;
