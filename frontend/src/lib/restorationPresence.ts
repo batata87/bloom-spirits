@@ -47,6 +47,8 @@ function channelName(roomKey: string): string {
   return `bloom-presence-${safe}`;
 }
 
+const FIXED_ROOM_TOPIC = "room_1";
+
 /** More spirits in the same shard → higher multiplier (diminishing returns). */
 export function helpersToMultiplier(helperCount: number): number {
   const n = Math.max(1, Math.floor(helperCount));
@@ -109,7 +111,7 @@ export function subscribeRestorationPresence(
   const supabase = getSupabase();
   const sk = sessionKey();
   const cfg = roomConfig();
-  const topic = channelName(cfg.key);
+  const topic = FIXED_ROOM_TOPIC || channelName(cfg.key);
   let authUserId = sk;
 
   const sync = () => {
@@ -139,7 +141,7 @@ export function subscribeRestorationPresence(
     }
 
     ch = supabase.channel(topic, {
-      config: { presence: { key: authUserId } },
+      config: { presence: { enabled: true, key: authUserId } },
     });
 
     ch
@@ -154,6 +156,10 @@ export function subscribeRestorationPresence(
         if (status === "SUBSCRIBED" && ch) {
           await ch.track({ name: displayName, at: joinedAt });
           sync();
+          return;
+        }
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("[Bloom Spirits] Presence channel subscribe status:", status);
         }
       });
   };

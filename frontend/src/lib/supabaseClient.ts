@@ -16,7 +16,11 @@ export function getSupabase(): SupabaseClient {
     throw new Error("Supabase is not configured (set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY).");
   }
   if (!client) {
-    client = createClient(url, key);
+    client = createClient(url, key, {
+      realtime: {
+        presence: { enabled: true },
+      },
+    });
   }
   return client;
 }

@@ -848,13 +848,13 @@ export async function mountGame(hostEl, options = {}) {
   };
 
   const ghosts = [];
-  const remoteSpirits = new Map();
-  const worldPresenceStorageKey = "bloom_world_presence_key";
+  const remotePlayers = new Map();
+  const worldPresenceStorageKey = "bloom_restoration_session";
   const getWorldPresenceKey = () => {
     try {
       let k = sessionStorage.getItem(worldPresenceStorageKey);
       if (!k) {
-        k = `w-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+        k = `s-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
         sessionStorage.setItem(worldPresenceStorageKey, k);
       }
       return k;
@@ -863,8 +863,9 @@ export async function mountGame(hostEl, options = {}) {
     }
   };
   let worldChannel = null;
-  let worldTrackTimer = 0;
+  let worldTrackInterval = null;
   const worldPresenceKey = getWorldPresenceKey();
+  let myPresenceKey = worldPresenceKey;
   let worldSubscribed = false;
 
   const trail = [];
@@ -983,9 +984,9 @@ export async function mountGame(hostEl, options = {}) {
     return Number.isFinite(n) ? n : fallback;
   };
   const upsertRemoteSpirit = (key, payload) => {
-    if (!payload || key === worldPresenceKey) return;
+    if (!payload || key === myPresenceKey) return;
     const skinId = normalizeSpiritLook(payload.skin);
-    let rs = remoteSpirits.get(key);
+    let rs = remotePlayers.get(key);
     if (!rs) {
       const sprite = new PIXI.Sprite(spiritLookTextures[skinId]);
       sprite.anchor.set(0.5);
@@ -995,7 +996,7 @@ export async function mountGame(hostEl, options = {}) {
       rs = { sprite, targetX: asFinite(payload.x, 0), targetY: asFinite(payload.y, 0), skin: skinId };
       rs.sprite.x = rs.targetX;
       rs.sprite.y = rs.targetY;
-      remoteSpirits.set(key, rs);
+      remotePlayers.set(key, rs);
     }
     rs.targetX = asFinite(payload.x, rs.targetX);
     rs.targetY = asFinite(payload.y, rs.targetY);
@@ -1005,14 +1006,15 @@ export async function mountGame(hostEl, options = {}) {
     }
   };
   const removeRemoteSpirit = (key) => {
-    const rs = remoteSpirits.get(key);
+    const rs = remotePlayers.get(key);
     if (!rs) return;
     rs.sprite.destroy();
-    remoteSpirits.delete(key);
+    remotePlayers.delete(key);
   };
   const syncRemoteSpiritsFromState = () => {
     if (!worldChannel) return;
     const state = worldChannel.presenceState() || {};
+    console.log("[Bloom Spirits] world sync presenceState:", state);
     const seen = new Set();
     for (const key of Object.keys(state)) {
       const raw = state[key];
@@ -1023,7 +1025,7 @@ export async function mountGame(hostEl, options = {}) {
       upsertRemoteSpirit(key, data);
       seen.add(key);
     }
-    for (const key of remoteSpirits.keys()) {
+    for (const key of remotePlayers.keys()) {
       if (!seen.has(key)) removeRemoteSpirit(key);
     }
   };
@@ -1042,7 +1044,8 @@ export async function mountGame(hostEl, options = {}) {
       } catch (e) {
         console.error("[Bloom Spirits] Failed to initialize world realtime auth", e);
       }
-      worldChannel = supabase.channel("world", { config: { presence: { key: presenceKey } } });
+      myPresenceKey = presenceKey;
+      worldChannel = supabase.channel("room_1", { config: { presence: { enabled: true, key: presenceKey } } });
       worldChannel
         .on("presence", { event: "sync" }, syncRemoteSpiritsFromState)
         .on("system", {}, (payload) => {
@@ -1080,6 +1083,15 @@ export async function mountGame(hostEl, options = {}) {
                 name: playerDisplayName,
               });
             } catch {}
+            if (worldTrackInterval) window.clearInterval(worldTrackInterval);
+            worldTrackInterval = window.setInterval(() => {
+              if (!worldSubscribed || !worldChannel) return;
+              void worldChannel.track({ x: player.x, y: player.y });
+            }, 100);
+            return;
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+            console.error("[Bloom Spirits] World channel subscribe status:", status);
           }
         });
     } catch (e) {
@@ -2529,17 +2541,7 @@ export async function mountGame(hostEl, options = {}) {
     player.y = clampedY;
     spirit.x = player.x;
     spirit.y = player.y;
-    worldTrackTimer += ticker.deltaMS;
-    if (worldSubscribed && worldChannel && worldTrackTimer >= 50) {
-      worldTrackTimer = 0;
-      void worldChannel.track({
-        x: player.x,
-        y: player.y,
-        skin: activeSpiritLook,
-        name: playerDisplayName,
-      });
-    }
-    for (const rs of remoteSpirits.values()) {
+    for (const rs of remotePlayers.values()) {
       rs.sprite.x += (rs.targetX - rs.sprite.x) * 0.18;
       rs.sprite.y += (rs.targetY - rs.sprite.y) * 0.18;
       const dxr = rs.targetX - rs.sprite.x;
@@ -3441,12 +3443,16 @@ export async function mountGame(hostEl, options = {}) {
     essenceTex.destroy(true);
     critterTextures.forEach((t) => t.destroy(true));
     presenceSub.unsubscribe();
+    if (worldTrackInterval) {
+      window.clearInterval(worldTrackInterval);
+      worldTrackInterval = null;
+    }
     if (worldChannel) {
       worldChannel.unsubscribe().catch(() => {});
       worldChannel = null;
     }
-    for (const rs of remoteSpirits.values()) rs.sprite.destroy();
-    remoteSpirits.clear();
+    for (const rs of remotePlayers.values()) rs.sprite.destroy();
+    remotePlayers.clear();
     lifeTex.destroy(true);
     miniMapTex.destroy(true);
     sounds.destroy();
