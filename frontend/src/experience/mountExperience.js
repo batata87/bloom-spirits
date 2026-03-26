@@ -23,7 +23,7 @@ import {
   setAccountMode,
   getStorageMode,
 } from "../session/playerStore.js";
-import { login, loginWithEmail, logout, subscribeAuth } from "../lib/auth.ts";
+import { login, logout, subscribeAuth } from "../lib/auth.ts";
 import { ensureAndLoadProfile, loadProfile, purchaseWithCreatures } from "../lib/profileService.ts";
 import { isSupabaseConfigured } from "../lib/supabaseClient.ts";
 import { playSoftClick } from "../ui/softClick.js";
@@ -585,7 +585,6 @@ export async function mountExperience(hostEl) {
   function refreshAuthButtons() {
     const loggedIn = getStorageMode() === "account";
     btnLogin.container.visible = !loggedIn;
-    btnGoogle.container.visible = !loggedIn;
     btnStore.container.visible = true;
     btnProfileQuick.container.visible = active === "welcome";
     refreshAccountTopBar();
@@ -595,6 +594,10 @@ export async function mountExperience(hostEl) {
     fontUi: FONT_UI,
     onClose: () => {},
     onBuyCreature: async (itemId) => {
+      if (getStorageMode() !== "account") {
+        window.alert("Please login with Google to make purchases.");
+        return;
+      }
       try {
         await purchaseWithCreatures(itemId);
         if (accountUserId) {
@@ -611,6 +614,10 @@ export async function mountExperience(hostEl) {
       }
     },
     onBuyUsd: async () => {
+      if (getStorageMode() !== "account") {
+        window.alert("Please login with Google to make purchases.");
+        return;
+      }
       console.log("Redirecting to Stripe...");
       storeUi.setStatus("Redirecting to Stripe...", 0xcde4ff);
     },
@@ -618,10 +625,6 @@ export async function mountExperience(hostEl) {
   storeRoot.addChild(storeUi.root);
   btnStore.container.on("pointerdown", () => {
     playSoftClick();
-    if (getStorageMode() !== "account") {
-      window.alert("Please login with Google first to use the Store.");
-      return;
-    }
     storeUi.setProfile(accountProfile);
     storeUi.setStatus("");
     storeUi.open();
@@ -771,8 +774,7 @@ export async function mountExperience(hostEl) {
     welcomeCtaHoverTarget = 0;
     gsap.to(btnEnter.container.scale, { x: 1, y: 1, duration: 0.22, ease: "power2.out" });
   });
-  const btnLogin = makeRoundedButton("Continue with email", 260, 44);
-  const btnGoogle = makeRoundedButton("Login with Google", 260, 44);
+  const btnLogin = makeRoundedButton("Login", 260, 44);
   const welcomeHintSeen = window.localStorage?.getItem("bloom_welcome_hint_seen") === "1";
   let showWelcomeMoveHint = !welcomeHintSeen;
   if (!showWelcomeMoveHint) welcomeMoveHint.visible = false;
@@ -906,11 +908,9 @@ export async function mountExperience(hostEl) {
   welcomeRoot.addChild(btnEnterWrap);
   welcomeRoot.addChild(welcomeMoveHint);
   welcomeRoot.addChild(btnLogin.container);
-  welcomeRoot.addChild(btnGoogle.container);
 
   if (!isSupabaseConfigured) {
     btnLogin.container.alpha = 0.75;
-    btnGoogle.container.alpha = 1;
   }
 
   refreshWelcomeProfile();
@@ -1176,9 +1176,7 @@ export async function mountExperience(hostEl) {
     welcomeMoveHint.y = ctaY + 90;
     welcomeMoveHint.visible = false;
     btnLogin.container.x = w * 0.5 - 130;
-    btnLogin.container.y = Math.min(h - 88, welcomeMoveHint.y + 28);
-    btnGoogle.container.x = w * 0.5 - 130;
-    btnGoogle.container.y = Math.min(h - 40, btnLogin.container.y + 50);
+    btnLogin.container.y = Math.min(h - 44, welcomeMoveHint.y + 34);
     initWelcomeSpores(w, h);
     initWelcomeFlowers(w, h);
 
@@ -1316,15 +1314,13 @@ export async function mountExperience(hostEl) {
   });
   btnLogin.container.on("pointerdown", () => {
     playSoftClick();
-    openLoginModal();
-  });
-  btnGoogle.container.on("pointerdown", async () => {
-    playSoftClick();
-    const { error } = await login();
-    if (error) {
-      console.error("[Bloom Spirits] Google sign-in failed", error);
-      window.alert("Google login is unavailable right now. Please verify Supabase env variables in this deployment.");
-    }
+    void (async () => {
+      const { error } = await login();
+      if (error) {
+        console.error("[Bloom Spirits] Google sign-in failed", error);
+        window.alert("Google login is unavailable right now. Please verify Supabase env variables in this deployment.");
+      }
+    })();
   });
 
   btnBack.container.on("pointerdown", () => {
@@ -1334,60 +1330,6 @@ export async function mountExperience(hostEl) {
   btnLogoutP.container.on("pointerdown", () => {
     void onLogoutClick();
   });
-
-  const modal = document.createElement("div");
-  modal.className = "bloom-login-modal";
-  modal.innerHTML = `
-    <div class="bloom-login-inner">
-      <label for="bloom-email">Where should we open the door?</label>
-      <input id="bloom-email" type="email" maxlength="320" placeholder="you@example.com" autocomplete="email" />
-      <p class="bloom-login-hint" hidden></p>
-      <div class="bloom-login-actions">
-        <button type="button" class="bloom-btn bloom-enter">Send the way</button>
-        <button type="button" class="bloom-btn bloom-cancel">Not now</button>
-      </div>
-    </div>
-  `;
-  hostEl.appendChild(modal);
-  const emailEl = modal.querySelector("#bloom-email");
-  const hintEl = modal.querySelector(".bloom-login-hint");
-
-  const submitEmail = async () => {
-    playSoftClick();
-    const email = (emailEl.value || "").trim();
-    if (!email) {
-      emailEl.focus();
-      return;
-    }
-    hintEl.hidden = true;
-    const { error } = await loginWithEmail(email);
-    if (error) {
-      hintEl.textContent = "That didn't work. Try again in a moment.";
-      hintEl.hidden = false;
-      return;
-    }
-    hintEl.textContent = "There's a path in your inbox. Follow it when you're ready.";
-    hintEl.hidden = false;
-  };
-
-  modal.querySelector(".bloom-enter").addEventListener("click", () => {
-    void submitEmail();
-  });
-  emailEl.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") void submitEmail();
-  });
-  modal.querySelector(".bloom-cancel").addEventListener("click", () => {
-    playSoftClick();
-    modal.classList.remove("visible");
-    hintEl.hidden = true;
-  });
-
-  function openLoginModal() {
-    modal.classList.add("visible");
-    emailEl.value = "";
-    hintEl.hidden = true;
-    setTimeout(() => emailEl.focus(), 80);
-  }
 
   welcomeRoot.alpha = 1;
   layoutFlowScreens();
@@ -1443,7 +1385,6 @@ export async function mountExperience(hostEl) {
         refreshWardrobeSelection();
         gameApi.setPlayerLabel(loadPlayer()?.name ?? "Spirit");
         refreshAuthButtons();
-        modal.classList.remove("visible");
         openModeSelect();
       } catch (e) {
         console.error("[Bloom Spirits] Sign-in failed", e);
@@ -1486,7 +1427,6 @@ export async function mountExperience(hostEl) {
     app.renderer.off("resize", layoutFlowScreens);
     for (let i = 0; i < welcomeFlowerTextures.length; i += 1) welcomeFlowerTextures[i].destroy(true);
     gameApi.cleanup();
-    modal.remove();
     app.destroy(true, { children: true, texture: true });
   };
 
