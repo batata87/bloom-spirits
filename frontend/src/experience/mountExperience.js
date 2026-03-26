@@ -397,11 +397,11 @@ export async function mountExperience(hostEl) {
   accountTopBar.visible = false;
   const btnStore = makeRoundedButton("Store", 96, 32);
   btnStore.container.visible = false;
+  const gitShaRaw = typeof import.meta.env.VITE_GIT_SHA === "string" ? import.meta.env.VITE_GIT_SHA : "";
+  const appVersionRaw = typeof import.meta.env.VITE_APP_VERSION === "string" ? import.meta.env.VITE_APP_VERSION : "";
   const buildVersionRaw =
-    import.meta.env.VITE_APP_VERSION ||
-    (typeof import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA === "string"
-      ? import.meta.env.VITE_VERCEL_GIT_COMMIT_SHA.slice(0, 7)
-      : "") ||
+    (gitShaRaw && gitShaRaw !== "dev" ? gitShaRaw.slice(0, 7) : "") ||
+    (appVersionRaw && appVersionRaw !== "0.0.0" ? appVersionRaw : "") ||
     "dev";
   const versionLabel = new PIXI.Text({
     text: `v${String(buildVersionRaw).replace(/^v/i, "")}`,
