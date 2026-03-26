@@ -464,46 +464,57 @@ export async function mountExperience(hostEl) {
     setGameMode: () => {},
     cleanup: () => {},
   };
-  const mountGameTask = mountGame(hostEl, {
-    app,
-    gameParent: gameRoot,
-    flowPlayerName: initialGuest?.name ?? "Guest",
-    spiritLookId: selectedSpiritLook,
-    onFlowProfile: () => {
-      playSoftClick();
-      showScreen("profile");
-    },
-    onFlowLogout: () => {
-      void onLogoutClick();
-    },
-    onFlowFeedback: () => {
-      playSoftClick();
-      const url = import.meta.env.VITE_FEEDBACK_URL;
-      if (typeof url === "string" && url.length > 0) {
-        window.open(url, "_blank", "noopener,noreferrer");
-        return;
-      }
-      window.open(`mailto:?subject=${encodeURIComponent("Bloom game feedback")}`, "_blank");
-    },
-    onBloom: () => {
-      void incrementBlooms(1);
-    },
-    onWorldAwaken: () => {
-      void incrementWorldsAwakened();
-    },
-    onSessionTime: (ms) => {
-      void addTimePlayed(ms);
-    },
-  })
-    .then((api) => {
-      gameApi = api;
-      gameApi.setSpiritLook(selectedSpiritLook);
-      gameApi.setPlayerLabel(loadPlayer()?.name ?? initialGuest?.name ?? "Guest");
-      gameApi.setPaused(active !== "game");
+  let gameReady = false;
+  let mountGameTask = null;
+  let mountGameError = null;
+  const startMountGame = () => {
+    mountGameError = null;
+    mountGameTask = mountGame(hostEl, {
+      app,
+      gameParent: gameRoot,
+      flowPlayerName: initialGuest?.name ?? "Guest",
+      spiritLookId: selectedSpiritLook,
+      onFlowProfile: () => {
+        playSoftClick();
+        showScreen("profile");
+      },
+      onFlowLogout: () => {
+        void onLogoutClick();
+      },
+      onFlowFeedback: () => {
+        playSoftClick();
+        const url = import.meta.env.VITE_FEEDBACK_URL;
+        if (typeof url === "string" && url.length > 0) {
+          window.open(url, "_blank", "noopener,noreferrer");
+          return;
+        }
+        window.open(`mailto:?subject=${encodeURIComponent("Bloom game feedback")}`, "_blank");
+      },
+      onBloom: () => {
+        void incrementBlooms(1);
+      },
+      onWorldAwaken: () => {
+        void incrementWorldsAwakened();
+      },
+      onSessionTime: (ms) => {
+        void addTimePlayed(ms);
+      },
     })
-    .catch((e) => {
-      console.error("[Bloom Spirits] mountGame failed; continuing with welcome-only fallback", e);
-    });
+      .then((api) => {
+        gameApi = api;
+        gameReady = true;
+        gameApi.setSpiritLook(selectedSpiritLook);
+        gameApi.setPlayerLabel(loadPlayer()?.name ?? initialGuest?.name ?? "Guest");
+        gameApi.setPaused(active !== "game");
+      })
+      .catch((e) => {
+        mountGameError = e;
+        console.error("[Bloom Spirits] mountGame failed; continuing with welcome-only fallback", e);
+        gameReady = false;
+      });
+    return mountGameTask;
+  };
+  startMountGame();
   try {
     await Promise.race([
       mountGameTask,
@@ -948,7 +959,7 @@ export async function mountExperience(hostEl) {
   GAME_MODES.forEach((mode) => {
     const card = makeModeCard(mode, (m) => {
       playSoftClick();
-      startJourney(m.id, m.title);
+      void startJourney(m.id, m.title);
     });
     msCardsRow.addChild(card);
   });
@@ -1034,7 +1045,7 @@ export async function mountExperience(hostEl) {
   function dismissModeSelect() {
     playSoftClick();
     if (getStorageMode() === "account") {
-      startJourney("restoration", "Endless Restoration");
+      void startJourney("restoration", "Endless Restoration");
       return;
     }
     gsap.to(modeSelectRoot, {
@@ -1287,7 +1298,26 @@ export async function mountExperience(hostEl) {
     showScreen("game");
   }
 
-  function startJourney(modeId = "restoration", modeTitle = "Endless Restoration") {
+  async function startJourney(modeId = "restoration", modeTitle = "Endless Restoration") {
+    if (!gameReady) {
+      try {
+        await mountGameTask;
+      } catch {}
+    }
+    if (!gameReady) {
+      try {
+        gameRoot.removeChildren();
+      } catch {}
+      try {
+        await startMountGame();
+      } catch {}
+    }
+    if (!gameReady) {
+      const extra = mountGameError?.message ? `\n\n${String(mountGameError.message)}` : "";
+      window.alert(`The world is still waking up. Please try again in a moment.${extra}`);
+      showScreen("welcome");
+      return;
+    }
     try {
       gameApi.setGameMode(modeId, modeTitle);
     } catch (e) {
@@ -1310,7 +1340,7 @@ export async function mountExperience(hostEl) {
     gameApi.setPlayerLabel(guest.name);
     gameApi.setSpiritLook(selectedSpiritLook);
     // Temporary hard-fail-safe: go straight to playable mode.
-    startJourney("restoration", "Endless Restoration");
+    void startJourney("restoration", "Endless Restoration");
   });
   btnLogin.container.on("pointerdown", () => {
     playSoftClick();

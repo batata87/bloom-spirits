@@ -737,7 +737,14 @@ export async function mountGame(hostEl, options = {}) {
     app.ticker.maxFPS = 30;
     hostEl.appendChild(app.canvas);
   }
-  app.renderer.roundPixels = true;
+  // Pixi v8 can expose roundPixels as readonly depending on renderer internals.
+  // Prefer stage-level pixel rounding and guard renderer assignment.
+  app.stage.roundPixels = true;
+  try {
+    if (app.renderer && "roundPixels" in app.renderer) {
+      app.renderer.roundPixels = true;
+    }
+  } catch {}
   app.canvas.style.touchAction = "none";
   PIXI.Text.defaultResolution = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
 
