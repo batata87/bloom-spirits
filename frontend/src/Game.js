@@ -1,6 +1,7 @@
 import * as PIXI from "pixi.js";
 import { GlowFilter } from "@pixi/filter-glow";
 import { subscribeRestorationPresence, helpersToMultiplier } from "./lib/restorationPresence.ts";
+import { getSupabase, isSupabaseConfigured } from "./lib/supabaseClient.ts";
 import {
   SPIRIT_LOOK_COUNT,
   SPIRIT_LOOKS,
@@ -840,6 +841,24 @@ export async function mountGame(hostEl, options = {}) {
   };
 
   const ghosts = [];
+  const remoteSpirits = new Map();
+  const worldPresenceStorageKey = "bloom_world_presence_key";
+  const getWorldPresenceKey = () => {
+    try {
+      let k = localStorage.getItem(worldPresenceStorageKey);
+      if (!k) {
+        k = `w-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+        localStorage.setItem(worldPresenceStorageKey, k);
+      }
+      return k;
+    } catch {
+      return `w-anon-${Date.now().toString(36)}`;
+    }
+  };
+  let worldChannel = null;
+  let worldTrackTimer = 0;
+  const worldPresenceKey = getWorldPresenceKey();
+  let worldSubscribed = false;
 
   const trail = [];
   const trailGfx = new PIXI.Graphics();
@@ -952,6 +971,96 @@ export async function mountGame(hostEl, options = {}) {
     helperMultiplier = u.multiplier;
     presencePeers = u.peers;
   });
+  const asFinite = (value, fallback = 0) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  const upsertRemoteSpirit = (key, payload) => {
+    if (!payload || key === worldPresenceKey) return;
+    const skinId = normalizeSpiritLook(payload.skin);
+    let rs = remoteSpirits.get(key);
+    if (!rs) {
+      const sprite = new PIXI.Sprite(spiritLookTextures[skinId]);
+      sprite.anchor.set(0.5);
+      sprite.alpha = 0.9;
+      sprite.scale.set(1.34);
+      spiritLayer.addChild(sprite);
+      rs = { sprite, targetX: asFinite(payload.x, 0), targetY: asFinite(payload.y, 0), skin: skinId };
+      rs.sprite.x = rs.targetX;
+      rs.sprite.y = rs.targetY;
+      remoteSpirits.set(key, rs);
+    }
+    rs.targetX = asFinite(payload.x, rs.targetX);
+    rs.targetY = asFinite(payload.y, rs.targetY);
+    if (rs.skin !== skinId) {
+      rs.skin = skinId;
+      rs.sprite.texture = spiritLookTextures[skinId];
+    }
+  };
+  const removeRemoteSpirit = (key) => {
+    const rs = remoteSpirits.get(key);
+    if (!rs) return;
+    rs.sprite.destroy();
+    remoteSpirits.delete(key);
+  };
+  const syncRemoteSpiritsFromState = () => {
+    if (!worldChannel) return;
+    const state = worldChannel.presenceState() || {};
+    const seen = new Set();
+    for (const key of Object.keys(state)) {
+      const raw = state[key];
+      const presences = Array.isArray(raw) ? raw : Array.isArray(raw?.metas) ? raw.metas : [];
+      if (!presences.length) continue;
+      const latest = presences[presences.length - 1] || null;
+      const data = latest?.presence ?? latest;
+      upsertRemoteSpirit(key, data);
+      seen.add(key);
+    }
+    for (const key of remoteSpirits.keys()) {
+      if (!seen.has(key)) removeRemoteSpirit(key);
+    }
+  };
+
+  const initWorldPresence = () => {
+    if (!isSupabaseConfigured) return;
+    try {
+      const supabase = getSupabase();
+      worldChannel = supabase.channel("world", { config: { presence: { key: worldPresenceKey } } });
+      worldChannel
+        .on("presence", { event: "sync" }, syncRemoteSpiritsFromState)
+        .on("presence", { event: "join" }, (payload) => {
+          const key = payload?.key;
+          if (!key) return;
+          const raw = payload?.newPresences;
+          const presences = Array.isArray(raw) ? raw : Array.isArray(raw?.metas) ? raw.metas : [];
+          const latest = presences[presences.length - 1] || null;
+          const data = latest?.presence ?? latest;
+          upsertRemoteSpirit(key, data);
+        })
+        .on("presence", { event: "leave" }, (payload) => {
+          const key = payload?.key;
+          if (!key) return;
+          removeRemoteSpirit(key);
+        })
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED" && worldChannel) {
+            worldSubscribed = true;
+            try {
+              await worldChannel.track({
+                x: player.x,
+                y: player.y,
+                skin: activeSpiritLook,
+                name: playerDisplayName,
+              });
+            } catch {}
+          }
+        });
+    } catch (e) {
+      console.error("[Bloom Spirits] world presence init failed", e);
+      worldChannel = null;
+      worldSubscribed = false;
+    }
+  };
 
   let worldLife = 0;
   const worldMilestones = [25, 50, 75];
@@ -1772,6 +1881,7 @@ export async function mountGame(hostEl, options = {}) {
   let beatTimerMs = 0;
   let beatDurationMs = 1700 + Math.random() * 600;
   const player = { x: 0, y: 0 };
+  initWorldPresence();
   const cam = { x: 0, y: 0, zoom: 0.65 };
 
   const addLifeAt = (wx, wy, rCells, amount) => {
@@ -2392,6 +2502,22 @@ export async function mountGame(hostEl, options = {}) {
     player.y = clampedY;
     spirit.x = player.x;
     spirit.y = player.y;
+    worldTrackTimer += ticker.deltaMS;
+    if (worldSubscribed && worldChannel && worldTrackTimer >= 50) {
+      worldTrackTimer = 0;
+      void worldChannel.track({
+        x: player.x,
+        y: player.y,
+        skin: activeSpiritLook,
+        name: playerDisplayName,
+      });
+    }
+    for (const rs of remoteSpirits.values()) {
+      rs.sprite.x += (rs.targetX - rs.sprite.x) * 0.18;
+      rs.sprite.y += (rs.targetY - rs.sprite.y) * 0.18;
+      const dxr = rs.targetX - rs.sprite.x;
+      rs.sprite.rotation = clamp(dxr * 0.004, -0.18, 0.18);
+    }
 
     beatTimerMs += ticker.deltaMS;
     if (beatTimerMs >= beatDurationMs) {
@@ -3287,6 +3413,12 @@ export async function mountGame(hostEl, options = {}) {
     essenceTex.destroy(true);
     critterTextures.forEach((t) => t.destroy(true));
     presenceSub.unsubscribe();
+    if (worldChannel) {
+      worldChannel.unsubscribe().catch(() => {});
+      worldChannel = null;
+    }
+    for (const rs of remoteSpirits.values()) rs.sprite.destroy();
+    remoteSpirits.clear();
     lifeTex.destroy(true);
     miniMapTex.destroy(true);
     sounds.destroy();
@@ -3303,9 +3435,25 @@ export async function mountGame(hostEl, options = {}) {
     setPlayerLabel: (s) => {
       playerDisplayName = s;
       presenceSub.setDisplayName(s);
+      if (worldSubscribed && worldChannel) {
+        void worldChannel.track({
+          x: player.x,
+          y: player.y,
+          skin: activeSpiritLook,
+          name: playerDisplayName,
+        });
+      }
     },
     setSpiritLook: (id) => {
       applySpiritLook(id);
+      if (worldSubscribed && worldChannel) {
+        void worldChannel.track({
+          x: player.x,
+          y: player.y,
+          skin: activeSpiritLook,
+          name: playerDisplayName,
+        });
+      }
     },
     setGameMode: (id, label) => {
       gameModeId = id;

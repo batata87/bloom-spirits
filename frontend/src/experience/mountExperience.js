@@ -450,7 +450,13 @@ export async function mountExperience(hostEl) {
 
   let selectedSpiritLook = normalizeSpiritLook(initialGuest?.spiritLook);
 
-  const gameApi = await mountGame(hostEl, {
+  let gameApi = {
+    setPaused: () => {},
+    setSpiritLook: () => {},
+    setPlayerLabel: () => {},
+    cleanup: () => {},
+  };
+  const mountGameTask = mountGame(hostEl, {
     app,
     gameParent: gameRoot,
     flowPlayerName: initialGuest?.name ?? "Guest",
@@ -480,7 +486,26 @@ export async function mountExperience(hostEl) {
     onSessionTime: (ms) => {
       void addTimePlayed(ms);
     },
-  });
+  })
+    .then((api) => {
+      gameApi = api;
+      gameApi.setSpiritLook(selectedSpiritLook);
+      gameApi.setPlayerLabel(loadPlayer()?.name ?? initialGuest?.name ?? "Guest");
+      gameApi.setPaused(active !== "game");
+    })
+    .catch((e) => {
+      console.error("[Bloom Spirits] mountGame failed; continuing with welcome-only fallback", e);
+    });
+  try {
+    await Promise.race([
+      mountGameTask,
+      new Promise((resolve) => {
+        window.setTimeout(resolve, 1200);
+      }),
+    ]);
+  } catch (e) {
+    console.error("[Bloom Spirits] mountGame bootstrap race failed", e);
+  }
 
   gameApi.setPaused(true);
   gameRoot.alpha = 0;
@@ -1348,7 +1373,9 @@ export async function mountExperience(hostEl) {
     setTimeout(() => emailEl.focus(), 80);
   }
 
-  welcomeRoot.alpha = 0;
+  welcomeRoot.alpha = 1;
+  layoutFlowScreens();
+  showScreen("welcome");
   let authBootstrapped = false;
   const bootFallbackTimer = window.setTimeout(() => {
     if (authBootstrapped) return;
