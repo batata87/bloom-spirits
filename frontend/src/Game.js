@@ -30,6 +30,15 @@ function lerp(a, b, t) {
   return a + (b - a) * t;
 }
 
+function makeGuestId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return `guest-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+}
+
 const PROGRESSION_KEY = "bloom_progression_v1";
 
 function loadProgression() {
@@ -867,6 +876,7 @@ export async function mountGame(hostEl, options = {}) {
   const worldPresenceKey = getWorldPresenceKey();
   let myPresenceKey = worldPresenceKey;
   let worldSubscribed = false;
+  let worldParticipantType = "guest";
 
   const trail = [];
   const trailGfx = new PIXI.Graphics();
@@ -1014,6 +1024,7 @@ export async function mountGame(hostEl, options = {}) {
   const syncRemoteSpiritsFromState = () => {
     if (!worldChannel) return;
     const state = worldChannel.presenceState() || {};
+    console.log("Full Presence State:", state);
     console.log("[Bloom Spirits] world sync presenceState:", state);
     const seen = new Set();
     for (const key of Object.keys(state)) {
@@ -1038,15 +1049,28 @@ export async function mountGame(hostEl, options = {}) {
       try {
         const { data } = await supabase.auth.getSession();
         const token = data.session?.access_token;
-        const uid = data.session?.user?.id;
         if (token) supabase.realtime.setAuth(token);
-        if (uid) presenceKey = uid;
+        const { data: userData } = await supabase.auth.getUser();
+        const uid = userData?.user?.id;
+        if (uid) {
+          presenceKey = uid;
+          worldParticipantType = "user";
+        } else {
+          let guestId = sessionStorage.getItem("guest_id");
+          if (!guestId) {
+            guestId = makeGuestId();
+            sessionStorage.setItem("guest_id", guestId);
+          }
+          presenceKey = guestId;
+          worldParticipantType = "guest";
+        }
       } catch (e) {
         console.error("[Bloom Spirits] Failed to initialize world realtime auth", e);
       }
       myPresenceKey = presenceKey;
+      console.log("Local Player ID:", myPresenceKey);
       worldChannel = supabase.channel("room_1", {
-        config: { private: true, presence: { enabled: true, key: presenceKey } },
+        config: { private: false, presence: { enabled: true, key: presenceKey } },
       });
       worldChannel
         .on("presence", { event: "sync" }, syncRemoteSpiritsFromState)
@@ -1083,12 +1107,13 @@ export async function mountGame(hostEl, options = {}) {
                 y: player.y,
                 skin: activeSpiritLook,
                 name: playerDisplayName,
+                type: worldParticipantType,
               });
             } catch {}
             if (worldTrackInterval) window.clearInterval(worldTrackInterval);
             worldTrackInterval = window.setInterval(() => {
               if (!worldSubscribed || !worldChannel) return;
-              void worldChannel.track({ x: player.x, y: player.y });
+              void worldChannel.track({ x: player.x, y: player.y, type: worldParticipantType });
             }, 100);
             return;
           }

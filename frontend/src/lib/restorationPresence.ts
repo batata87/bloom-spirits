@@ -49,6 +49,34 @@ function channelName(roomKey: string): string {
 
 const FIXED_ROOM_TOPIC = "room_1";
 
+function makeGuestId() {
+  try {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+      return crypto.randomUUID();
+    }
+  } catch {}
+  return `guest-${Math.random().toString(36).slice(2)}-${Date.now().toString(36)}`;
+}
+
+async function getParticipantId(supabase: ReturnType<typeof getSupabase>, fallbackKey: string) {
+  try {
+    const { data } = await supabase.auth.getUser();
+    if (data?.user?.id) {
+      return { id: data.user.id, type: "user" as const };
+    }
+  } catch {}
+  try {
+    let guestId = sessionStorage.getItem("guest_id");
+    if (!guestId) {
+      guestId = makeGuestId();
+      sessionStorage.setItem("guest_id", guestId);
+    }
+    return { id: guestId, type: "guest" as const };
+  } catch {
+    return { id: fallbackKey, type: "guest" as const };
+  }
+}
+
 /** More spirits in the same shard → higher multiplier (diminishing returns). */
 export function helpersToMultiplier(helperCount: number): number {
   const n = Math.max(1, Math.floor(helperCount));
@@ -112,11 +140,13 @@ export function subscribeRestorationPresence(
   const sk = sessionKey();
   const cfg = roomConfig();
   const topic = FIXED_ROOM_TOPIC || channelName(cfg.key);
-  let authUserId = sk;
+  let participantId = sk;
+  let participantType: "user" | "guest" = "guest";
 
   const sync = () => {
     if (!ch) return;
     const state = ch.presenceState() as Record<string, unknown>;
+    console.log("Full Presence State:", state);
     const keys = Object.keys(state);
     const n = Math.max(1, keys.length);
     const peers = extractPeers(state);
@@ -133,15 +163,17 @@ export function subscribeRestorationPresence(
     try {
       const { data } = await supabase.auth.getSession();
       const token = data.session?.access_token;
-      const uid = data.session?.user?.id;
       if (token) supabase.realtime.setAuth(token);
-      if (uid) authUserId = uid;
+      const participant = await getParticipantId(supabase, sk);
+      participantId = participant.id;
+      participantType = participant.type;
+      console.log("Local Player ID:", participantId);
     } catch (e) {
       console.error("[Bloom Spirits] Failed to initialize presence auth", e);
     }
 
     ch = supabase.channel(topic, {
-      config: { private: true, presence: { enabled: true, key: authUserId } },
+      config: { private: false, presence: { enabled: true, key: participantId } },
     });
 
     ch
@@ -154,7 +186,7 @@ export function subscribeRestorationPresence(
       })
       .subscribe(async (status) => {
         if (status === "SUBSCRIBED" && ch) {
-          await ch.track({ name: displayName, at: joinedAt });
+          await ch.track({ x: 0, y: 0, type: participantType, name: displayName, at: joinedAt });
           sync();
           return;
         }
